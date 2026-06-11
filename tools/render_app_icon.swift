@@ -1,6 +1,8 @@
 #!/usr/bin/env swift
-// MapCam app icon renderer.
+// CATcam app icon renderer.
 // Generates a 1024x1024 fully-opaque PNG using AppKit / CoreGraphics.
+// Concept: retro/film-tinted camera LENS + a CAT (ears silhouette + paw mark)
+// over a faint map of the Japan area.
 // Usage: swift tools/render_app_icon.swift  (run from repo root)
 
 import AppKit
@@ -10,9 +12,9 @@ import Foundation
 // MARK: - Configuration
 
 let size: CGFloat = 1024
-let outDir = "MapCam/Assets.xcassets/AppIcon.appiconset"
+let outDir = "CATcam/Assets.xcassets/AppIcon.appiconset"
 let outPath = "\(outDir)/icon1024.png"
-let countriesPath = "MapCam/Resources/countries.min.json"
+let countriesPath = "CATcam/Resources/countries.min.json"
 
 // MARK: - Helpers
 
@@ -45,13 +47,18 @@ guard let ctx = CGContext(
 func toCG(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x, y: size - p.y) }
 func toCGY(_ y: CGFloat) -> CGFloat { size - y }
 
-// MARK: - 1. Background gradient (top #16243E -> bottom #060A12)
+func circle(_ center: CGPoint, _ radius: CGFloat) -> CGRect {
+    CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+}
+
+// MARK: - 1. Background gradient (warm retro / faded film)
+// top cream #F2E4C8 -> mid amber #C98A4E -> bottom warm brown #6B4A2B
 
 do {
     let grad = CGGradient(
         colorsSpace: colorSpace,
-        colors: [color(0x16243E), color(0x060A12)] as CFArray,
-        locations: [0.0, 1.0]
+        colors: [color(0xF2E4C8), color(0xD9A364), color(0x8A5C34), color(0x5E3F25)] as CFArray,
+        locations: [0.0, 0.42, 0.78, 1.0]
     )!
     // top of image in CG coords is y = size
     ctx.drawLinearGradient(
@@ -60,9 +67,24 @@ do {
         end: CGPoint(x: 0, y: 0),
         options: []
     )
+
+    // Soft warm vignette to give it a faded-film feel and keep corners darker.
+    ctx.saveGState()
+    let vg = CGGradient(
+        colorsSpace: colorSpace,
+        colors: [color(0x000000, alpha: 0.0), color(0x3A2412, alpha: 0.0), color(0x2A1A0C, alpha: 0.38)] as CFArray,
+        locations: [0.0, 0.65, 1.0]
+    )!
+    ctx.drawRadialGradient(
+        vg,
+        startCenter: CGPoint(x: size / 2, y: size / 2), startRadius: 0,
+        endCenter: CGPoint(x: size / 2, y: size / 2), endRadius: size * 0.72,
+        options: [.drawsAfterEndLocation]
+    )
+    ctx.restoreGState()
 }
 
-// MARK: - 2. Map layer (Japan area, Mercator)
+// MARK: - 2. Map layer (Japan area, Mercator) — faint, dissolves into bg
 
 struct Country {
     let bbox: [Double] // w, s, e, n
@@ -106,10 +128,8 @@ do {
     let cy = mercY(centerLat)
 
     // viewport bbox in lon/lat for intersection test (approximate, square fit)
-    // Convert halfX (merc units) back to lat range symmetric around center.
     let vWest = centerLon - spanLonDeg / 2.0
     let vEast = centerLon + spanLonDeg / 2.0
-    // For lat, invert mercator: lat = (2*atan(exp(y)) - pi/2) * 180/pi
     func invMercY(_ y: Double) -> Double { (2.0 * atan(exp(y)) - Double.pi / 2.0) * 180.0 / Double.pi }
     let vSouth = invMercY(cy - halfX)
     let vNorth = invMercY(cy + halfX)
@@ -124,7 +144,6 @@ do {
     }
 
     func bboxIntersects(_ b: [Double]) -> Bool {
-        // b: w, s, e, n
         let w = b[0], s = b[1], e = b[2], n = b[3]
         if e < vWest || w > vEast { return false }
         if n < vSouth || s > vNorth { return false }
@@ -132,8 +151,9 @@ do {
     }
 
     let countries = loadCountries()
-    ctx.setStrokeColor(color(0xFFFFFF, alpha: 0.42))
-    ctx.setLineWidth(5)
+    // Faint warm cream lines that melt into the background.
+    ctx.setStrokeColor(color(0xFBF1DC, alpha: 0.22))
+    ctx.setLineWidth(4)
     ctx.setLineJoin(.round)
     ctx.setLineCap(.round)
 
@@ -162,124 +182,150 @@ do {
     }
 }
 
-// MARK: - 3 & 4. Dashed route + departure marker (BELOW lens, drawn first)
+// MARK: - 3. Cat ears (silhouette) BEHIND/ABOVE the lens
+// Drawn before the lens so the lens rests in front of the ear bases,
+// reading as a round cat "head" with two pointed ears poking up.
 
-let routeStart = CGPoint(x: 200, y: 850) // top-left coords
-let routeEnd = CGPoint(x: 512, y: 512)
-
-do {
-    ctx.saveGState()
-    ctx.setStrokeColor(color(0xFFFFFF, alpha: 0.9))
-    ctx.setLineWidth(9)
-    ctx.setLineCap(.round)
-    ctx.setLineDash(phase: 0, lengths: [2, 40])
-    ctx.move(to: toCG(routeStart))
-    ctx.addLine(to: toCG(routeEnd))
-    ctx.strokePath()
-    ctx.restoreGState()
-}
-
-// Departure marker: white circle + airplane symbol rotated toward route direction
-do {
-    let mc = toCG(routeStart)
-    let r: CGFloat = 46
-    ctx.setFillColor(color(0xFFFFFF))
-    ctx.fillEllipse(in: CGRect(x: mc.x - r, y: mc.y - r, width: r * 2, height: r * 2))
-
-    // direction angle from start to end (in top-left coords, y down)
-    let dx = routeEnd.x - routeStart.x
-    let dy = routeEnd.y - routeStart.y
-    let angle = atan2(dy, dx) // radians, screen coords
-
-    var drewSymbol = false
-    if #available(macOS 11.0, *) {
-        if let img = NSImage(systemSymbolName: "airplane", accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: 44, weight: .bold)
-            let symImg = img.withSymbolConfiguration(config) ?? img
-            let targetSize: CGFloat = 50
-            var rect = CGRect(x: 0, y: 0, width: targetSize, height: targetSize)
-            if let cg = symImg.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
-                ctx.saveGState()
-                ctx.translateBy(x: mc.x, y: mc.y)
-                // airplane points up (north) by default; rotate so its nose
-                // follows route direction. In CG (y up) the screen-down route
-                // angle must be negated.
-                ctx.rotate(by: -angle - .pi / 2)
-                // tint dark grey by clipping to mask and filling
-                let drawRect = CGRect(x: -targetSize / 2, y: -targetSize / 2, width: targetSize, height: targetSize)
-                ctx.clip(to: drawRect, mask: cg)
-                ctx.setFillColor(color(0x2A2F38))
-                ctx.fill(drawRect)
-                ctx.restoreGState()
-                drewSymbol = true
-            }
-        }
-    }
-    if !drewSymbol {
-        FileHandle.standardError.write("WARN: airplane symbol unavailable, drew white circle only\n".data(using: .utf8)!)
-    }
-}
-
-// MARK: - 5. Lens (center 512, 490)
-
-let lensCenter = CGPoint(x: 512, y: 490)
+let lensCenter = CGPoint(x: 512, y: 540)
 let lc = toCG(lensCenter)
+let lensOuterR: CGFloat = 268
 
-func circle(_ center: CGPoint, _ radius: CGFloat) -> CGRect {
-    CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+// Warm dark fur color for the cat silhouette.
+let furColor = color(0x3A2414)
+
+do {
+    // Ear is a triangle with slightly rounded tip, plus an inner pink-ish accent.
+    // Pointed triangular ear with a softly rounded tip.
+    func earPath(apex: CGPoint, baseL: CGPoint, baseR: CGPoint, shrink: CGFloat) -> CGPath {
+        // Optionally shrink toward the centroid to build the inner ear.
+        let cxp = (apex.x + baseL.x + baseR.x) / 3.0
+        let cyp = (apex.y + baseL.y + baseR.y) / 3.0
+        func sh(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: cxp + (p.x - cxp) * shrink, y: cyp + (p.y - cyp) * shrink)
+        }
+        let a = sh(apex), bl = sh(baseL), br = sh(baseR)
+        // Round the tip: approach the apex from each side and curve across it.
+        let tL = CGPoint(x: bl.x * 0.18 + a.x * 0.82, y: bl.y * 0.18 + a.y * 0.82)
+        let tR = CGPoint(x: br.x * 0.18 + a.x * 0.82, y: br.y * 0.18 + a.y * 0.82)
+        let path = CGMutablePath()
+        path.move(to: toCG(bl))
+        path.addLine(to: toCG(tL))
+        path.addQuadCurve(to: toCG(tR), control: toCG(a))
+        path.addLine(to: toCG(br))
+        path.closeSubpath()
+        return path
+    }
+
+    func drawEar(apex: CGPoint, baseL: CGPoint, baseR: CGPoint, innerColor: CGColor) {
+        ctx.addPath(earPath(apex: apex, baseL: baseL, baseR: baseR, shrink: 1.0))
+        ctx.setFillColor(furColor)
+        ctx.fillPath()
+        ctx.addPath(earPath(apex: apex, baseL: baseL, baseR: baseR, shrink: 0.52))
+        ctx.setFillColor(innerColor)
+        ctx.fillPath()
+    }
+
+    let innerPink = color(0xEFB199)
+    // Left ear — taller, sharper, tucked behind the upper-left of the lens
+    drawEar(
+        apex: CGPoint(x: 282, y: 96),
+        baseL: CGPoint(x: 246, y: 372),
+        baseR: CGPoint(x: 446, y: 286),
+        innerColor: innerPink
+    )
+    // Right ear
+    drawEar(
+        apex: CGPoint(x: 742, y: 96),
+        baseL: CGPoint(x: 578, y: 286),
+        baseR: CGPoint(x: 778, y: 372),
+        innerColor: innerPink
+    )
 }
 
-// Outer ring r=272 white #F2F5F9
-ctx.setFillColor(color(0xF2F5F9))
-ctx.fillEllipse(in: circle(lc, 272))
+// MARK: - 4. Lens (center = lensCenter)
 
-// Barrel r=244 #11161F
-ctx.setFillColor(color(0x11161F))
-ctx.fillEllipse(in: circle(lc, 244))
+// Outer ring (warm cream)
+ctx.setFillColor(color(0xF3E7CC))
+ctx.fillEllipse(in: circle(lc, lensOuterR))
 
-// Glass r=206 radial gradient, center offset toward (440, 420) top-left coords
+// Thin warm brass accent ring
+ctx.setStrokeColor(color(0xB5793C, alpha: 0.9))
+ctx.setLineWidth(8)
+ctx.strokeEllipse(in: circle(lc, lensOuterR - 8))
+
+// Barrel (dark)
+ctx.setFillColor(color(0x241712))
+ctx.fillEllipse(in: circle(lc, 240))
+
+// Glass: radial gradient, warm-tinted dark glass with a teal-amber sheen
 do {
     ctx.saveGState()
-    ctx.addEllipse(in: circle(lc, 206))
+    ctx.addEllipse(in: circle(lc, 202))
     ctx.clip()
     let glassGrad = CGGradient(
         colorsSpace: colorSpace,
-        colors: [color(0x3D6CC0), color(0x16294A), color(0x0A1526)] as CFArray,
-        locations: [0.0, 0.55, 1.0]
+        colors: [color(0x4A6B5E), color(0x27322C), color(0x161311), color(0x0C0A09)] as CFArray,
+        locations: [0.0, 0.4, 0.75, 1.0]
     )!
-    let innerCenter = toCG(CGPoint(x: 440, y: 420))
+    let innerCenter = toCG(CGPoint(x: lensCenter.x - 70, y: lensCenter.y - 70))
     ctx.drawRadialGradient(
         glassGrad,
         startCenter: innerCenter, startRadius: 0,
-        endCenter: lc, endRadius: 230,
+        endCenter: lc, endRadius: 226,
         options: [.drawsAfterEndLocation]
     )
     ctx.restoreGState()
 }
 
-// Reflection: top-left translucent white ellipse alpha 0.30, center (420,400), rx90 ry60, rotate -35
+// Reflection: top-left translucent white ellipse for a glassy, 3D highlight
 do {
     ctx.saveGState()
-    let hc = toCG(CGPoint(x: 420, y: 400))
+    let hc = toCG(CGPoint(x: lensCenter.x - 84, y: lensCenter.y - 88))
     ctx.translateBy(x: hc.x, y: hc.y)
     ctx.rotate(by: 35 * .pi / 180) // -35 deg in screen coords = +35 in CG
     ctx.setFillColor(color(0xFFFFFF, alpha: 0.30))
-    ctx.fillEllipse(in: CGRect(x: -90, y: -60, width: 180, height: 120))
+    ctx.fillEllipse(in: CGRect(x: -92, y: -58, width: 184, height: 116))
     ctx.restoreGState()
 }
 
-// Inner thin ring r=150 white alpha 0.14 lineWidth 10
-ctx.setStrokeColor(color(0xFFFFFF, alpha: 0.14))
+// Inner thin ring
+ctx.setStrokeColor(color(0xFFFFFF, alpha: 0.12))
 ctx.setLineWidth(10)
-ctx.strokeEllipse(in: circle(lc, 150))
+ctx.strokeEllipse(in: circle(lc, 148))
 
-// Center marker: white r=58 -> orange #FF5A2E r=44 -> white r=14
+// Center "current location" marker: white -> warm amber -> white dot
 ctx.setFillColor(color(0xFFFFFF))
-ctx.fillEllipse(in: circle(lc, 58))
-ctx.setFillColor(color(0xFF5A2E))
-ctx.fillEllipse(in: circle(lc, 44))
+ctx.fillEllipse(in: circle(lc, 56))
+ctx.setFillColor(color(0xF2913C))
+ctx.fillEllipse(in: circle(lc, 42))
 ctx.setFillColor(color(0xFFFFFF))
 ctx.fillEllipse(in: circle(lc, 14))
+
+// MARK: - 5. Paw print (foreground, lower-right beside the lens)
+
+do {
+    let pawCenter = CGPoint(x: 800, y: 800) // top-left coords
+    let pawColor = color(0xFFFFFF, alpha: 0.95)
+    ctx.setFillColor(pawColor)
+
+    // Main pad: a rounded triangle-ish blob (use ellipse, slightly tall)
+    let padW: CGFloat = 96
+    let padH: CGFloat = 80
+    let padC = toCG(CGPoint(x: pawCenter.x, y: pawCenter.y + 28))
+    ctx.fillEllipse(in: CGRect(x: padC.x - padW / 2, y: padC.y - padH / 2, width: padW, height: padH))
+
+    // Four toe beans arching over the pad
+    let toes: [(CGFloat, CGFloat, CGFloat)] = [
+        (pawCenter.x - 64, pawCenter.y - 18, 26),
+        (pawCenter.x - 22, pawCenter.y - 52, 28),
+        (pawCenter.x + 22, pawCenter.y - 52, 28),
+        (pawCenter.x + 64, pawCenter.y - 18, 26),
+    ]
+    for (tx, ty, tr) in toes {
+        let c = toCG(CGPoint(x: tx, y: ty))
+        ctx.fillEllipse(in: CGRect(x: c.x - tr, y: c.y - tr, width: tr * 2, height: tr * 2))
+    }
+}
 
 // MARK: - Export PNG (opaque)
 

@@ -2,7 +2,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 
 /// Metal で書いた Core Image カーネル(retroFilm)のラッパー。
-/// ビネットを重ねて周辺を落とし、黒の沈みを強調する。
+/// レトロ・フィルム風(退色プリント調)に仕上げ、周辺に温かみのある軽いビネットを重ねる。
 final class RetroFilmFilter {
     static let shared = RetroFilmFilter()
 
@@ -22,10 +22,11 @@ final class RetroFilmFilter {
             output = filtered
         }
 
+        // レトロ調らしい軽めのビネット(ノワールほど強く落とさない)
         let vignette = CIFilter.vignette()
         vignette.inputImage = output
-        vignette.intensity = Float(0.9 * intensity)
-        vignette.radius = 2.2
+        vignette.intensity = Float(0.45 * intensity)
+        vignette.radius = 2.6
         if let vignetted = vignette.outputImage {
             output = vignetted
         }
