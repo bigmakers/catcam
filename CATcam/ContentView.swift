@@ -15,6 +15,12 @@ struct ContentView: View {
     @AppStorage("polaroid") private var polaroid = true
     /// 地図表示オン/オフ(永続化)
     @AppStorage("mapEnabled") private var mapEnabled = true
+    /// オートシャッター(猫がこちらを向いたら自動撮影)。デフォルト OFF のオプトイン。
+    @AppStorage("autoShutter") private var autoShutter = false
+    /// 直近のオート撮影時刻(連続撮影防止のクールダウン用)
+    @State private var lastAutoCaptureDate: Date?
+    /// オート撮影が armed のとき、猫が向いた瞬間に出す一瞬のヒント表示
+    @State private var showAutoHint = false
     @State private var intensity = 0.8
     @State private var lastThumbnail: UIImage?
     @State private var isSaving = false
@@ -88,6 +94,20 @@ struct ContentView: View {
                         catCallButton
                             .padding(16)
                     }
+                    .overlay(alignment: .center) {
+                        // オートシャッター発火時の一瞬のヒント
+                        if showAutoHint {
+                            Text("📸 猫を発見!")
+                                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 10)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Capsule())
+                                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                        }
+                    }
 
                 Spacer(minLength: 0)
                 controls
@@ -143,6 +163,27 @@ struct ContentView: View {
         .onChange(of: poiCount) { _ in
             updateNearbyPlaces()
         }
+        // オートシャッター: 猫が「こちらを向いた」立ち上がりで自動撮影
+        .onChange(of: catDetector.isCatFacing) { facing in
+            handleFacingChange(facing)
+        }
+    }
+
+    /// isCatFacing の立ち上がり(false→true)を受けてオート撮影する。
+    /// armed(autoShutter=ON)・保存中でない・前回オート撮影から 3 秒以上、を満たすときだけ発火。
+    private func handleFacingChange(_ facing: Bool) {
+        guard autoShutter, facing, !isSaving else { return }
+        let now = Date()
+        if let last = lastAutoCaptureDate, now.timeIntervalSince(last) < 3 {
+            return  // クールダウン中
+        }
+        lastAutoCaptureDate = now
+        // 「猫を発見!」を一瞬表示してから手動と同じ capture() を呼ぶ
+        withAnimation(.easeOut(duration: 0.15)) { showAutoHint = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            withAnimation(.easeIn(duration: 0.25)) { showAutoHint = false }
+        }
+        capture()
     }
 
     /// 現在地・ジャンル・件数で周辺スポットを更新する(マネージャ側で重複取得を判定)。
@@ -484,6 +525,20 @@ struct ContentView: View {
                     .foregroundStyle(mapEnabled ? .yellow : .white)
                     .frame(width: 40, height: 32)
                     .background(Color.white.opacity(mapEnabled ? 0.0 : 0.18))
+                    .clipShape(Capsule())
+            }
+
+            // オートシャッターのオン/オフトグル(地図トグルの右隣)。
+            // ON のとき色で強調し、armed であることを一目で分かるようにする。
+            Button {
+                Haptics.tick()
+                autoShutter.toggle()
+            } label: {
+                Image(systemName: autoShutter ? "camera.aperture" : "camera")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(autoShutter ? .yellow : .white)
+                    .frame(width: 40, height: 32)
+                    .background(Color.white.opacity(autoShutter ? 0.0 : 0.18))
                     .clipShape(Capsule())
             }
 
