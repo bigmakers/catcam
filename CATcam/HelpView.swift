@@ -63,7 +63,7 @@ struct HelpView: View {
         HelpItem(
             icon: "circle.lefthalf.filled",
             title: "フィルタ強度",
-            description: "黒が引き立つフィルム調フィルタの強さをスライダーで調整します。0% で無効です。"
+            description: "レトロ・フィルム風(退色プリント調)フィルタの強さをスライダーで調整します。0% で無効です。"
         ),
         HelpItem(
             icon: "square",
