@@ -41,6 +41,11 @@ struct HelpView: View {
             description: "カメラに写った猫を自動で数えて、プレビューに頭数を表示します。撮影するとその頭数が写真に記録されます。"
         ),
         HelpItem(
+            icon: "speaker.wave.2.fill",
+            title: "猫を呼ぶ",
+            description: "ボタンを押すと猫の注意を引く音が鳴ります。チュチュ・チチチ・ニャーから選べます。猫がこちらを向いた瞬間にシャッターを。マナーモードでも鳴ります。"
+        ),
+        HelpItem(
             icon: "map",
             title: "国境アウトライン地図",
             description: "写真の右下に国境線と現在地マーカーが焼き込まれます。プレビューの地図をピンチすると 1〜8 倍でズーム調整できます。地図ボタンで表示のオン/オフを切り替えられます。"
@@ -63,7 +68,7 @@ struct HelpView: View {
         HelpItem(
             icon: "circle.lefthalf.filled",
             title: "フィルタ強度",
-            description: "レトロ・フィルム風(退色プリント調)フィルタの強さをスライダーで調整します。0% で無効です。"
+            description: "黒が引き立つフィルム調フィルタの強さをスライダーで調整します。0% で無効です。"
         ),
         HelpItem(
             icon: "square",

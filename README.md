@@ -6,7 +6,7 @@
 
 - **猫の自動検出** — Apple Vision フレームワークによるオンデバイス猫認識。プレビューにリアルタイムで頭数を表示し、撮影すると「N 匹」が写真に記録される
 - **GPS オーバーレイ** — 逆ジオコーディングした地名(例: `📍 Selangor, Malaysia`)+ 座標 + 撮影日時を写真左上に焼き込み
-- **Metal フィルタ** — Core Image カスタムカーネル(`RetroFilm.ci.metal`)によるレトロ・フィルム風(退色プリント調)フィルター。スライダーで強度 0–100% 調整
+- **Metal フィルタ** — Core Image カスタムカーネル(`NoirFilm.ci.metal`)による黒が引き立つフィルム調フィルター。スライダーで強度 0–100% 調整
 - **ポラロイドモード(オンオフ)** — 真四角クロップ + 白フチ + 下帯に地名・日時キャプション
 - **ライブプレビュー** — MTKView + CIContext(Metal) でフィルタ適用済み映像を 30fps 表示
 - **EXIF GPS 埋め込み** — 保存される JPEG に GPS / 撮影日時メタデータを書き込み、`PHAsset` にも位置情報を設定
@@ -36,8 +36,8 @@ CATcam/
 │   ├── CameraManager.swift      # AVCaptureSession(プレビューフレーム + 写真撮影)
 │   └── MetalPreviewView.swift   # MTKView + CIContext によるライブプレビュー
 ├── Filters/
-│   ├── RetroFilm.ci.metal       # Core Image Metal カーネル(レトロフィルム調)
-│   └── RetroFilmFilter.swift    # カーネルラッパー + ビネット
+│   ├── NoirFilm.ci.metal       # Core Image Metal カーネル(黒が引き立つフィルム調)
+│   └── NoirFilmFilter.swift    # カーネルラッパー + ビネット
 ├── Vision/
 │   └── CatDetector.swift        # Vision フレームワークによる猫検出
 ├── Location/

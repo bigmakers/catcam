@@ -40,7 +40,7 @@ final class PhotoRenderer {
             return nil
         }
 
-        image = RetroFilmFilter.shared.apply(to: image, intensity: options.intensity)
+        image = NoirFilmFilter.shared.apply(to: image, intensity: options.intensity)
         image = image.transformed(by: CGAffineTransform(
             translationX: -image.extent.origin.x,
             y: -image.extent.origin.y))

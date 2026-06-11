@@ -64,7 +64,7 @@ struct MetalPreviewView: UIViewRepresentable {
                   let drawable = view.currentDrawable,
                   view.drawableSize.width > 0, view.drawableSize.height > 0 else { return }
 
-            input = RetroFilmFilter.shared.apply(to: input, intensity: intensity)
+            input = NoirFilmFilter.shared.apply(to: input, intensity: intensity)
 
             if squareCrop {
                 let side = min(input.extent.width, input.extent.height)

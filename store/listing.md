@@ -61,7 +61,7 @@ Features
 - Country outline map — your location and borders, with 1–8x pinch zoom, one tap to hide
 - Nearby places — names and distances of spots around you, with genre and count (1–6) options
 - Comment — your words placed under the headline as typography
-- Retro film filter — a faded-print film look with adjustable intensity
+- Noir film filter — a black-forward film look with adjustable intensity
 - Polaroid mode — square photos with a white border
 - Lens switch — 1x / 3x / 5x / front camera
 

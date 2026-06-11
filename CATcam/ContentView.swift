@@ -8,6 +8,8 @@ struct ContentView: View {
     @StateObject private var nearbyManager = NearbyPlacesManager()
     /// Vision による猫検出(プレビューの頭数バッジ + 焼き込み用)
     @StateObject private var catDetector = CatDetector()
+    /// 猫を振り向かせる呼び鈴(合成音を再生)
+    @StateObject private var catCaller = CatCaller()
 
     /// ポラロイドモード(デフォルト ON、切替状態は永続化)
     @AppStorage("polaroid") private var polaroid = true
@@ -43,6 +45,11 @@ struct ContentView: View {
     /// 写真に焼き込むコメント(撮影後も自動クリアしない)
     @State private var commentText = ""
 
+    /// 呼び鈴で選択中のサウンド(永続化)
+    @AppStorage("catSound") private var catSoundRaw = CatCaller.Sound.squeak.rawValue
+    /// rawValue → Sound 変換
+    private var catSound: CatCaller.Sound { CatCaller.Sound(rawValue: catSoundRaw) ?? .squeak }
+
     /// 現在のジャンル(rawValue → enum)
     private var poiGenre: POIGenre { POIGenre(rawValue: poiGenreRaw) ?? .food }
 
@@ -75,6 +82,11 @@ struct ContentView: View {
                         // 猫の頭数バッジ(プレビュー上端中央。ヘルプ/左上 liveOverlay と干渉しない位置)
                         catBadge
                             .padding(.top, 12)
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        // 呼び鈴ボタン(プレビュー左下。ヘルプ/地図/頭数バッジと干渉しない位置)
+                        catCallButton
+                            .padding(16)
                     }
 
                 Spacer(minLength: 0)
@@ -344,6 +356,32 @@ struct ContentView: View {
                 .clipShape(Capsule())
                 .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 .animation(.easeInOut(duration: 0.2), value: catDetector.catCount)
+        }
+    }
+
+    /// 呼び鈴ボタン。タップで選択中サウンドを再生、長押しメニューで3種から切替。
+    /// レトロ調(半透明の暗い角丸 + 白アイコン+影)。アイコンは選択中サウンドの symbol。
+    private var catCallButton: some View {
+        Menu {
+            // メニューから鳴らすサウンドを選択(永続化)
+            Picker("呼び鈴の音", selection: $catSoundRaw) {
+                ForEach(CatCaller.Sound.allCases) { sound in
+                    Label(sound.label, systemImage: sound.symbol)
+                        .tag(sound.rawValue)
+                }
+            }
+        } label: {
+            Image(systemName: catSound.symbol)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+                .frame(width: 48, height: 48)
+                .background(Color.black.opacity(0.45))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+        } primaryAction: {
+            // タップ(プライマリアクション)で選択中サウンドを再生
+            Haptics.tick()
+            catCaller.play(catSound)
         }
     }
 
