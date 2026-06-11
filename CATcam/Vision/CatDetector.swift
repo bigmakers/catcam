@@ -40,8 +40,11 @@ final class CatDetector: ObservableObject {
     /// 猫と判定する信頼度しきい値
     private let confidenceThreshold: Float = 0.6
 
-    /// 目・鼻ジョイントを採用する信頼度しきい値
-    private let jointConfidenceThreshold: Float = 0.3
+    /// 目を採用する信頼度しきい値。横顔では遠い側の目が隠れて confidence が
+    /// 下がるため、両目とも高めを要求することで横顔を弾く。
+    private let eyeConfidenceThreshold: Float = 0.5
+    /// 鼻を採用する信頼度しきい値
+    private let noseConfidenceThreshold: Float = 0.4
 
     private let request = VNRecognizeAnimalsRequest()
     private let poseRequest = VNDetectAnimalBodyPoseRequest()
@@ -83,8 +86,7 @@ final class CatDetector: ObservableObject {
                     }.count
                 }
                 if runFace {
-                    facing = self.evaluateFacing(poseResults: self.poseRequest.results,
-                                                 animalResults: self.request.results)
+                    facing = self.evaluateFacing(poseResults: self.poseRequest.results)
                 }
             } catch {
                 // 検出失敗時は安全に 0 / 非向き扱い(デバウンスで直前値を保持)
@@ -98,52 +100,35 @@ final class CatDetector: ObservableObject {
     }
 
     /// ポーズ observation から「猫が正面を向いている」かを判定する。
-    /// 左目・右目・鼻が confidence > しきい値 で取得でき、両目が概ね水平・
-    /// 鼻が両目の間に位置するなら true。ジョイントが取れない場合は
-    /// 猫 bbox が画面の一定割合以上の大きさかを向き相当のフォールバックにする。
-    private func evaluateFacing(poseResults: [VNAnimalBodyPoseObservation]?,
-                                animalResults: [VNRecognizedObjectObservation]?) -> Bool {
-        // --- 1. 目・鼻ジョイントによる正面判定 ---
-        if let poses = poseResults, !poses.isEmpty {
-            // 最も信頼度の高いポーズ observation を採用
-            let best = poses.max(by: { $0.confidence < $1.confidence })
-            if let best,
-               let points = try? best.recognizedPoints(.all) {
-                let leftEye = points[.leftEye]
-                let rightEye = points[.rightEye]
-                let nose = points[.nose]
-                if let le = leftEye, let re = rightEye, let no = nose,
-                   le.confidence > jointConfidenceThreshold,
-                   re.confidence > jointConfidenceThreshold,
-                   no.confidence > jointConfidenceThreshold {
-                    // Vision の正規化座標(原点左下、0...1)。両目の間隔を基準にする。
-                    let eyeDX = abs(le.location.x - re.location.x)
-                    let eyeDY = abs(le.location.y - re.location.y)
-                    let eyeSpan = max(eyeDX, 0.0001)
-                    // 両目が概ね水平: 縦ずれが横間隔より十分小さい
-                    let eyesLevel = eyeDY < eyeSpan * 0.6
-                    // 鼻が両目の中点付近(横方向)にある: 対称性チェック
-                    let eyeMidX = (le.location.x + re.location.x) / 2
-                    let noseCentered = abs(no.location.x - eyeMidX) < eyeSpan * 0.6
-                    return eyesLevel && noseCentered
-                }
-            }
-        }
+    /// 横顔での誤発火を避けるため、目・鼻ジョイントが正面顔の配置を満たすときのみ true。
+    /// ジョイントが取れない場合は false(オートシャッターは安全側=発火しない)。
+    private func evaluateFacing(poseResults: [VNAnimalBodyPoseObservation]?) -> Bool {
+        guard let poses = poseResults, !poses.isEmpty else { return false }
+        // 最も信頼度の高いポーズ observation を採用
+        guard let best = poses.max(by: { $0.confidence < $1.confidence }),
+              let points = try? best.recognizedPoints(.all),
+              let le = points[.leftEye], let re = points[.rightEye], let no = points[.nose]
+        else { return false }
 
-        // --- 2. フォールバック: ジョイントが無い/取れない場合 ---
-        // 猫 bbox が画面の一定割合以上(幅か高さ >= 0.25)なら「近くで安定検出」=
-        // 向いている代わりの指標として扱う。目・鼻 API が使えない端末向けの保険。
-        if let animals = animalResults {
-            for obs in animals where obs.labels.contains(where: {
-                $0.identifier == VNAnimalIdentifier.cat.rawValue
-                    && $0.confidence > confidenceThreshold
-            }) {
-                if obs.boundingBox.width >= 0.25 || obs.boundingBox.height >= 0.25 {
-                    return true
-                }
-            }
-        }
-        return false
+        // 横顔では遠い側の目が隠れて confidence が落ちる。両目とも高信頼度を要求して横顔を弾く。
+        guard le.confidence > eyeConfidenceThreshold,
+              re.confidence > eyeConfidenceThreshold,
+              no.confidence > noseConfidenceThreshold else { return false }
+
+        // Vision の正規化座標(0...1)。両目の間隔を基準にする。
+        let eyeDX = abs(le.location.x - re.location.x)
+        let eyeDY = abs(le.location.y - re.location.y)
+        let eyeSpan = max(eyeDX, 0.0001)
+
+        // 正面では両目が左右に十分離れる。横顔では両目が重なって eyeDX が小さくなるので弾く。
+        guard eyeDX > 0.03 else { return false }
+        // 両目が概ね水平: 縦ずれが横間隔より十分小さい(厳しめ)
+        guard eyeDY < eyeSpan * 0.4 else { return false }
+        // 鼻が両目の中点付近(横方向)にある。横顔では鼻が片側に寄るので弾く(厳しめ)
+        let eyeMidX = (le.location.x + re.location.x) / 2
+        guard abs(no.location.x - eyeMidX) < eyeSpan * 0.45 else { return false }
+
+        return true
     }
 
     /// デバウンスを適用して catCount をメインスレッドで更新する。
