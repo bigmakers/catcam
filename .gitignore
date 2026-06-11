@@ -2,7 +2,7 @@
 .DS_Store
 
 # XcodeGen 生成物(project.yml がソース)
-MapCam.xcodeproj/
+CATcam.xcodeproj/
 
 # ビルド成果物
 /build/
@@ -12,3 +12,4 @@ DerivedData/
 # スクリーンショットの作業フォルダ(成果物は App Store Connect 側に持つ)
 store/screenshots/in/
 store/screenshots/out/
+store/screenshots/out-*/
