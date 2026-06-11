@@ -22,6 +22,9 @@ final class CameraManager: NSObject, ObservableObject {
     /// プレビュー用フレーム。ビデオキューから呼ばれる。
     var onPreviewFrame: ((CIImage) -> Void)?
 
+    /// 猫検出用の生ピクセルバッファ。ビデオキューから呼ばれる(プレビュー経路とは独立)。
+    var onPixelBuffer: ((CVPixelBuffer) -> Void)?
+
     private let videoOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
     private let sessionQueue = DispatchQueue(label: "mapcam.session")
@@ -214,6 +217,8 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         onPreviewFrame?(CIImage(cvPixelBuffer: pixelBuffer))
+        // 猫検出にも同じフレームを渡す(プレビュー/フィルタ経路は変更しない)
+        onPixelBuffer?(pixelBuffer)
     }
 }
 

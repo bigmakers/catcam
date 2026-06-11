@@ -36,6 +36,11 @@ struct HelpView: View {
 
     private let helpItems: [HelpItem] = [
         HelpItem(
+            icon: "pawprint.fill",
+            title: "猫を検出",
+            description: "カメラに写った猫を自動で数えて、プレビューに頭数を表示します。撮影するとその頭数が写真に記録されます。"
+        ),
+        HelpItem(
             icon: "map",
             title: "国境アウトライン地図",
             description: "写真の右下に国境線と現在地マーカーが焼き込まれます。プレビューの地図をピンチすると 1〜8 倍でズーム調整できます。地図ボタンで表示のオン/オフを切り替えられます。"

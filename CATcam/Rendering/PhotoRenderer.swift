@@ -18,6 +18,8 @@ struct CaptureOptions {
     var comment: String = ""
     /// 近くのスポット(display 済みの "名前 120m" 文字列)
     var nearbyPlaces: [String] = []
+    /// 撮影瞬間に検出した猫の頭数(0 のとき焼き込まない)
+    var catCount: Int = 0
 }
 
 /// 撮影した写真にフィルタ・オーバーレイ・ポラロイド枠を適用し、
@@ -96,6 +98,12 @@ final class PhotoRenderer {
             if !options.comment.isEmpty {
                 draw(options.comment,
                      font: .systemFont(ofSize: 44 * u, weight: .heavy),
+                     color: .white)
+            }
+            // 猫の頭数(地名の前。「ここで猫を N 匹見つけた」記録)
+            if options.catCount > 0 {
+                draw("🐾 \(options.catCount)匹",
+                     font: .systemFont(ofSize: 34 * u, weight: .heavy),
                      color: .white)
             }
             if !options.placeName.isEmpty {
@@ -219,6 +227,12 @@ final class PhotoRenderer {
             if !options.placeName.isEmpty {
                 draw("📍 " + options.placeName,
                      font: .systemFont(ofSize: placeSize, weight: .bold),
+                     color: ink)
+            }
+            // 猫の頭数(地名の直後。下帯に収めるため place より小さめ)
+            if options.catCount > 0 {
+                draw("🐾 \(options.catCount)匹",
+                     font: .systemFont(ofSize: subtitleSize * 1.05, weight: .heavy),
                      color: ink)
             }
             var subtitle = Self.displayDateFormatter.string(from: options.date)

@@ -6,6 +6,8 @@ struct ContentView: View {
     @StateObject private var camera = CameraManager()
     @StateObject private var locationManager = LocationManager()
     @StateObject private var nearbyManager = NearbyPlacesManager()
+    /// Vision による猫検出(プレビューの頭数バッジ + 焼き込み用)
+    @StateObject private var catDetector = CatDetector()
 
     /// ポラロイドモード(デフォルト ON、切替状態は永続化)
     @AppStorage("polaroid") private var polaroid = true
@@ -69,6 +71,11 @@ struct ContentView: View {
                         }
                         .padding(16)
                     }
+                    .overlay(alignment: .top) {
+                        // 猫の頭数バッジ(プレビュー上端中央。ヘルプ/左上 liveOverlay と干渉しない位置)
+                        catBadge
+                            .padding(.top, 12)
+                    }
 
                 Spacer(minLength: 0)
                 controls
@@ -77,6 +84,8 @@ struct ContentView: View {
         }
         .onAppear {
             camera.start()
+            // カメラの各フレームを猫検出に渡す(プレビュー/フィルタ経路は変更しない)
+            camera.onPixelBuffer = { catDetector.process($0) }
             locationManager.start()
             // 国境データを先読み
             Task.detached { CountryShapes.shared.loadIfNeeded() }
@@ -319,6 +328,23 @@ struct ContentView: View {
         }
         .foregroundStyle(.white)
         .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
+    }
+
+    /// 猫の頭数バッジ。検出時のみ表示。レトロ調(白文字+影、半透明の暗い角丸背景)。
+    @ViewBuilder
+    private var catBadge: some View {
+        if catDetector.catCount > 0 {
+            Text("🐾 \(catDetector.catCount)")
+                .font(.system(size: 16, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.45))
+                .clipShape(Capsule())
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                .animation(.easeInOut(duration: 0.2), value: catDetector.catCount)
+        }
     }
 
     private func permissionMessage(_ text: String) -> some View {
@@ -567,7 +593,8 @@ struct ContentView: View {
                                      mapZoom: mapZoom,
                                      mapEnabled: mapEnabled,
                                      comment: commentText,
-                                     nearbyPlaces: nearbyManager.places.map(\.display))
+                                     nearbyPlaces: nearbyManager.places.map(\.display),
+                                     catCount: catDetector.catCount)
 
         camera.capturePhoto { photo in
             DispatchQueue.global(qos: .userInitiated).async {
