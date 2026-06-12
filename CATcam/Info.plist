@@ -23,11 +23,11 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>写真を撮影するためにカメラを使用します。</string>
+	<string>猫を検出して頭数を数え、地名・地図とともに写真へ記録するためにカメラを使用します。例:猫にカメラを向けると頭数が表示され、シャッターを押すと「ここで2匹見つけた」と地名つきで写真に焼き込まれます。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>写真に撮影場所を記録するために位置情報を使用します。</string>
+	<string>猫を見つけた場所の地名と座標を写真や地図に記録するために位置情報を使用します。例:撮影場所が「Tokyo, Japan / 35.68°N, 139.69°E」として写真に焼き込まれます。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>撮影した写真をフォトライブラリに保存します。</string>
+	<string>猫の頭数や地名・地図を焼き込んで作成した写真をフォトライブラリに保存するために使用します。例:シャッター後、加工済みの一枚がカメラロールに追加されます。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
