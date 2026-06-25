@@ -25,6 +25,8 @@ struct ContentView: View {
     @State private var lastThumbnail: UIImage?
     @State private var isSaving = false
     @State private var flashOpacity = 0.0
+    /// 直近の加工結果を全画面プレビュー表示するフラグ
+    @State private var showPreview = false
 
     /// ライブプレビュー用の国境アウトライン地図
     @State private var mapImage: UIImage?
@@ -35,6 +37,15 @@ struct ContentView: View {
 
     /// 地図ズーム倍率(デフォルトでややズーム)
     @AppStorage("mapZoom") private var mapZoom = 2.5
+
+    /// 地名を焼き込むか(コード見出し + 📍行)
+    @AppStorage("showPlaceName") private var showPlaceName = true
+    /// 座標を焼き込むか
+    @AppStorage("showCoordinates") private var showCoordinates = true
+    /// 日時を焼き込むか
+    @AppStorage("showDateTime") private var showDateTime = true
+    /// 焼き込み情報を右端に寄せるか(false=左端)。表示設定と同一キー。
+    @AppStorage("infoOnRight") private var infoOnRight = false
 
     /// ヘルプシート表示フラグ
     @State private var showHelp = false
@@ -64,6 +75,9 @@ struct ContentView: View {
     /// ピンチ中の連打デバウンス用の直前生成 Task
     @State private var mapRenderTask: Task<Void, Never>?
 
+    /// フォトライブラリピッカー表示フラグ
+    @State private var showPhotoPicker = false
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -71,7 +85,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 preview
                     .frame(maxWidth: .infinity)
-                    .aspectRatio(polaroid ? 1.12 / 1.30 : 3.0 / 4.0, contentMode: .fit)
+                    .aspectRatio(polaroid ? 1.12 / 1.30 : 9.0 / 16.0, contentMode: .fit)
                     .clipped()
                     .animation(.easeInOut(duration: 0.2), value: polaroid)
                     .overlay(alignment: .topTrailing) {
@@ -129,6 +143,20 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showHelp) { HelpView() }
         .sheet(isPresented: $showPOISettings) { POISettingsView() }
+        .fullScreenCover(isPresented: $showPreview) {
+            if let lastThumbnail {
+                ResultPreviewView(image: lastThumbnail) { showPreview = false }
+            }
+        }
+        .sheet(isPresented: $showPhotoPicker) {
+            PhotoLibraryPicker { image, location, date in
+                showPhotoPicker = false
+                importFromLibrary(image: image, location: location, date: date)
+            } onCancel: {
+                showPhotoPicker = false
+            }
+            .ignoresSafeArea()
+        }
     }
 
     // MARK: - Preview
@@ -192,14 +220,14 @@ struct ContentView: View {
         nearbyManager.update(for: location, genre: poiGenre, count: poiCount)
     }
 
-    /// 通常モード: フルフレームの映像 + 左上の liveOverlay と地図(従来レイアウト)
+    /// 通常モード: フルフレームの映像 + 焼き込み内容(liveOverlay + 地図)のライブ表示
     private var normalPreview: some View {
         ZStack(alignment: .topLeading) {
             cameraLayer(squareCrop: false)
 
-            // 左上: 焼き込み内容(テキスト + その下に地図)のライブ表示
+            // 焼き込み内容(テキスト + その下に地図)のライブ表示。左右切替対応。
             GeometryReader { geo in
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: infoOnRight ? .trailing : .leading, spacing: 10) {
                     liveOverlay
                     if mapEnabled, let mapImage {
                         Image(uiImage: mapImage)
@@ -212,6 +240,8 @@ struct ContentView: View {
                     }
                 }
                 .padding(16)
+                .frame(width: geo.size.width, height: geo.size.height,
+                       alignment: infoOnRight ? .topTrailing : .topLeading)
             }
         }
     }
@@ -229,14 +259,14 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 // 上部: 上・左・右 margin の白フチ内に正方形カメラ映像。
-                // 映像左上に地図を重ね、ピンチズームを維持する。
-                ZStack(alignment: .topLeading) {
+                // 映像左上(または右上)に地図を重ね、ピンチズームを維持する。
+                ZStack(alignment: infoOnRight ? .topTrailing : .topLeading) {
                     cameraLayer(squareCrop: true)
                         .frame(width: photoSide, height: photoSide)
                         .clipped()
 
                     // 地図 + その下に近くのスポット(composePolaroid と同じ配置)
-                    VStack(alignment: .leading, spacing: photoSide * 0.012) {
+                    VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.012) {
                         if mapEnabled, let mapImage {
                             Image(uiImage: mapImage)
                                 .resizable()
@@ -246,14 +276,15 @@ struct ContentView: View {
                         }
                         polaroidPlaces(photoSide: photoSide)
                     }
-                    .offset(x: mapPad, y: mapPad)
+                    .offset(x: infoOnRight ? -mapPad : mapPad, y: mapPad)
                 }
                 .padding(.top, margin)
                 .padding(.horizontal, margin)
 
                 // 下帯キャプション
                 polaroidCaption(photoSide: photoSide)
-                    .padding(.leading, margin + photoSide * 0.008)
+                    .frame(maxWidth: .infinity, alignment: infoOnRight ? .trailing : .leading)
+                    .padding(infoOnRight ? .trailing : .leading, margin + photoSide * 0.008)
                     .padding(.top, photoSide * 0.03)
 
                 Spacer(minLength: 0)
@@ -273,8 +304,8 @@ struct ContentView: View {
         let codeRatio: CGFloat = hasComment ? 0.056 : 0.064
         let placeRatio: CGFloat = hasComment ? 0.030 : 0.036
         let subtitleRatio: CGFloat = hasComment ? 0.024 : 0.027
-        VStack(alignment: .leading, spacing: photoSide * 0.01) {
-            if let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
+        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.01) {
+            if showPlaceName, let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
                 Text(code)
                     .font(.system(size: photoSide * codeRatio, weight: .heavy))
                     .foregroundStyle(ink)
@@ -284,15 +315,18 @@ struct ContentView: View {
                     .font(.system(size: photoSide * 0.032, weight: .bold))
                     .foregroundStyle(ink)
             }
-            if !locationManager.placeName.isEmpty {
+            if showPlaceName, !locationManager.placeName.isEmpty {
                 Text("📍 \(locationManager.placeName)")
                     .font(.system(size: photoSide * placeRatio, weight: .bold))
                     .foregroundStyle(ink)
             }
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                Text(captionSubtitle(date: context.date))
-                    .font(.system(size: photoSide * subtitleRatio, weight: .regular, design: .monospaced))
-                    .foregroundStyle(ink.opacity(0.65))
+                let subtitle = captionSubtitle(date: context.date)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: photoSide * subtitleRatio, weight: .regular, design: .monospaced))
+                        .foregroundStyle(ink.opacity(0.65))
+                }
             }
         }
     }
@@ -300,7 +334,7 @@ struct ContentView: View {
     /// 写真上(地図の下)の近くのスポット表示(composePolaroid の配置に対応)。
     @ViewBuilder
     private func polaroidPlaces(photoSide: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: photoSide * 0.006) {
+        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.006) {
             ForEach(nearbyManager.places.prefix(6).map(\.display), id: \.self) { place in
                 Text("・" + place)
                     .font(.system(size: photoSide * 0.026, weight: .semibold))
@@ -313,11 +347,14 @@ struct ContentView: View {
 
     /// 下帯3行目: 日時 +(座標があれば)"   " + 座標。composePolaroid と同一の組み立て。
     private func captionSubtitle(date: Date) -> String {
-        var subtitle = PhotoRenderer.displayDateFormatter.string(from: date)
-        if let coordinate = locationManager.location?.coordinate {
-            subtitle += "   " + coordinate.displayString
+        var parts: [String] = []
+        if showDateTime {
+            parts.append(PhotoRenderer.displayDateFormatter.string(from: date))
         }
-        return subtitle
+        if showCoordinates, let coordinate = locationManager.location?.coordinate {
+            parts.append(coordinate.displayString)
+        }
+        return parts.joined(separator: "   ")
     }
 
     /// カメラ映像 or 権限メッセージ。両モード共通。
@@ -351,8 +388,8 @@ struct ContentView: View {
 
     /// 撮影結果に焼き込まれる内容のライブ表示
     private var liveOverlay: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
+        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: 4) {
+            if showPlaceName, let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
                 Text(code)
                     .font(.system(size: 34, weight: .heavy))
             }
@@ -360,17 +397,19 @@ struct ContentView: View {
                 Text(commentText)
                     .font(.system(size: 20, weight: .heavy))
             }
-            if !locationManager.placeName.isEmpty {
+            if showPlaceName, !locationManager.placeName.isEmpty {
                 Text("📍 \(locationManager.placeName)")
                     .font(.system(size: 15, weight: .bold))
             }
-            if let coordinate = locationManager.location?.coordinate {
+            if showCoordinates, let coordinate = locationManager.location?.coordinate {
                 Text(coordinate.displayString)
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
             }
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                Text(PhotoRenderer.displayDateFormatter.string(from: context.date))
-                    .font(.system(size: 13, weight: .medium))
+            if showDateTime {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Text(PhotoRenderer.displayDateFormatter.string(from: context.date))
+                        .font(.system(size: 13, weight: .medium))
+                }
             }
             // 近くのスポット(日時の下)
             ForEach(nearbyManager.places.map(\.display), id: \.self) { place in
@@ -459,8 +498,12 @@ struct ContentView: View {
             .padding(.horizontal, 28)
 
             HStack {
-                thumbnail
-                    .frame(width: 56, height: 56)
+                // 左側: サムネイル + ギャラリー取り込みボタン
+                VStack(spacing: 6) {
+                    thumbnail
+                        .frame(width: 56, height: 56)
+                    importButton
+                }
 
                 Spacer()
 
@@ -512,7 +555,7 @@ struct ContentView: View {
         .padding(.horizontal, 28)
     }
 
-    /// レンズ切替 + 地図トグルの水平選択行
+    /// レンズ切替 + 地図・オートシャッタートグルの水平選択行
     private var lensRow: some View {
         HStack(spacing: 10) {
             // 地図オン/オフトグル(行の左端)
@@ -551,12 +594,12 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            // 近くのスポット設定(行の右端、地図トグルと同様のカプセル)
+            // 表示設定(行の右端)
             Button {
                 Haptics.tick()
                 showPOISettings = true
             } label: {
-                Image(systemName: "fork.knife")
+                Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(poiGenre == .none ? .white : .yellow)
                     .frame(width: 40, height: 32)
@@ -608,11 +651,13 @@ struct ContentView: View {
         .opacity(camera.status == .running && !isSaving ? 1 : 0.4)
     }
 
-    /// タップで写真アプリを開く
+    /// タップで直近の加工結果を全画面プレビュー(無ければ写真アプリを開く)
     private var thumbnail: some View {
         Button {
             Haptics.tick()
-            if let url = URL(string: "photos-redirect://") {
+            if lastThumbnail != nil {
+                showPreview = true
+            } else if let url = URL(string: "photos-redirect://") {
                 UIApplication.shared.open(url)
             }
         } label: {
@@ -687,7 +732,11 @@ struct ContentView: View {
                                      mapEnabled: mapEnabled,
                                      comment: commentText,
                                      nearbyPlaces: nearbyManager.places.map(\.display),
-                                     catCount: catDetector.catCount)
+                                     catCount: catDetector.catCount,
+                                     showPlaceName: showPlaceName,
+                                     showCoordinates: showCoordinates,
+                                     showDateTime: showDateTime,
+                                     infoOnRight: infoOnRight)
 
         camera.capturePhoto { photo in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -700,6 +749,66 @@ struct ContentView: View {
                     lastThumbnail = thumbnail
                     isSaving = false
                 }
+            }
+        }
+    }
+
+    // MARK: - Import from Photo Library
+
+    /// ギャラリー取り込みボタン(サムネイルの下に配置)
+    private var importButton: some View {
+        Button {
+            Haptics.tick()
+            showPhotoPicker = true
+        } label: {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: 56, height: 24)
+        }
+        .disabled(isSaving)
+        .opacity(isSaving ? 0.4 : 1)
+    }
+
+    /// PHPicker から取得した画像を ImportProcessor で加工・保存する。
+    private func importFromLibrary(image: UIImage, location: CLLocation?, date: Date?) {
+        isSaving = true
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        let currentPolaroid = polaroid
+        let currentIntensity = intensity
+        let currentMapZoom = mapZoom
+        let currentMapEnabled = mapEnabled
+        let currentComment = commentText
+        let currentGenre = poiGenre
+        let currentCount = poiCount
+        let currentShowPlaceName = showPlaceName
+        let currentShowCoordinates = showCoordinates
+        let currentShowDateTime = showDateTime
+        let currentInfoOnRight = infoOnRight
+
+        Task {
+            let result = await ImportProcessor.process(
+                image: image,
+                location: location,
+                date: date,
+                polaroid: currentPolaroid,
+                intensity: currentIntensity,
+                mapZoom: currentMapZoom,
+                mapEnabled: currentMapEnabled,
+                comment: currentComment,
+                poiGenre: currentGenre,
+                poiCount: currentCount,
+                showPlaceName: currentShowPlaceName,
+                showCoordinates: currentShowCoordinates,
+                showDateTime: currentShowDateTime,
+                infoOnRight: currentInfoOnRight
+            )
+            await MainActor.run {
+                if let result {
+                    lastThumbnail = result
+                }
+                isSaving = false
             }
         }
     }

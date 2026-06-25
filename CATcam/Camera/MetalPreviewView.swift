@@ -74,16 +74,17 @@ struct MetalPreviewView: UIViewRepresentable {
                 input = input.cropped(to: crop)
             }
 
-            // アスペクトフィットで drawable に収める
+            // アスペクトフィルで drawable を満たす(はみ出しは描画 bounds でクロップ)。
+            // 保存画像(通常モードは 9:16 センタークロップ)とプレビューを一致させる。
             let drawableSize = view.drawableSize
-            let scale = min(drawableSize.width / input.extent.width,
+            let scale = max(drawableSize.width / input.extent.width,
                             drawableSize.height / input.extent.height)
             input = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             input = input.transformed(by: CGAffineTransform(
                 translationX: (drawableSize.width - input.extent.width) / 2 - input.extent.origin.x,
                 y: (drawableSize.height - input.extent.height) / 2 - input.extent.origin.y))
 
-            // レターボックス部分が前フレームのまま残らないよう黒背景に合成する
+            // フィル後のはみ出し部分が前フレームのまま残らないよう黒背景に合成する
             input = input.composited(over: CIImage(color: .black)
                 .cropped(to: CGRect(origin: .zero, size: drawableSize)))
 

@@ -20,6 +20,14 @@ struct CaptureOptions {
     var nearbyPlaces: [String] = []
     /// 撮影瞬間に検出した猫の頭数(0 のとき焼き込まない)
     var catCount: Int = 0
+    /// 地名(コード見出し + 📍行)を焼き込むか
+    var showPlaceName: Bool = true
+    /// 座標を焼き込むか
+    var showCoordinates: Bool = true
+    /// 日時を焼き込むか
+    var showDateTime: Bool = true
+    /// 焼き込み情報を右端に寄せるか(false=左端)。
+    var infoOnRight: Bool = false
 }
 
 /// 撮影した写真にフィルタ・オーバーレイ・ポラロイド枠を適用し、
@@ -36,20 +44,42 @@ final class PhotoRenderer {
 
     func render(photo: AVCapturePhoto, options: CaptureOptions) -> Data? {
         guard let data = photo.fileDataRepresentation(),
-              var image = CIImage(data: data, options: [.applyOrientationProperty: true]) else {
+              var ciImage = CIImage(data: data, options: [.applyOrientationProperty: true]) else {
             return nil
         }
 
-        image = NoirFilmFilter.shared.apply(to: image, intensity: options.intensity)
-        image = image.transformed(by: CGAffineTransform(
-            translationX: -image.extent.origin.x,
-            y: -image.extent.origin.y))
+        ciImage = NoirFilmFilter.shared.apply(to: ciImage, intensity: options.intensity)
+        ciImage = ciImage.transformed(by: CGAffineTransform(
+            translationX: -ciImage.extent.origin.x,
+            y: -ciImage.extent.origin.y))
 
-        guard let cgImage = ciContext.createCGImage(image, from: image.extent) else {
+        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
             return nil
         }
         let filtered = UIImage(cgImage: cgImage)
+        return renderUIImage(filtered, options: options)
+    }
 
+    /// フォトライブラリから選んだ UIImage に同じ加工を適用する。
+    func render(image: UIImage, options: CaptureOptions) -> Data? {
+        // 呼び出し側(PhotoLibraryPicker.normalized())で正立済みの前提。
+        guard let cgInput = image.cgImage else { return nil }
+        var ciImage = CIImage(cgImage: cgInput)
+
+        ciImage = NoirFilmFilter.shared.apply(to: ciImage, intensity: options.intensity)
+        ciImage = ciImage.transformed(by: CGAffineTransform(
+            translationX: -ciImage.extent.origin.x,
+            y: -ciImage.extent.origin.y))
+
+        guard let cgFiltered = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+            return nil
+        }
+        let filtered = UIImage(cgImage: cgFiltered)
+        return renderUIImage(filtered, options: options)
+    }
+
+    /// UIImage に対してオーバーレイ合成 → JPEG エンコードを行う共通本体。
+    private func renderUIImage(_ filtered: UIImage, options: CaptureOptions) -> Data? {
         let composed = options.polaroid
             ? composePolaroid(filtered, options: options)
             : composeOverlay(filtered, options: options)
@@ -59,7 +89,9 @@ final class PhotoRenderer {
 
     // MARK: - 通常モード: 写真の左上に Passage 風のオーバーレイ
 
-    private func composeOverlay(_ image: UIImage, options: CaptureOptions) -> UIImage {
+    private func composeOverlay(_ rawImage: UIImage, options: CaptureOptions) -> UIImage {
+        // 通常モードは縦長 9:16(ポートレート 16:9)にセンタークロップする
+        let image = centerCrop(rawImage, aspectW: 9, aspectH: 16)
         let size = image.size
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -77,6 +109,9 @@ final class PhotoRenderer {
             shadow.shadowBlurRadius = 10 * u
             shadow.shadowOffset = CGSize(width: 0, height: 2 * u)
 
+            func startX(_ w: CGFloat) -> CGFloat {
+                options.infoOnRight ? size.width - pad - w : pad
+            }
             func draw(_ text: String, font: UIFont, color: UIColor) {
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: font,
@@ -84,12 +119,12 @@ final class PhotoRenderer {
                     .shadow: shadow,
                 ]
                 let attributed = NSAttributedString(string: text, attributes: attributes)
-                attributed.draw(at: CGPoint(x: pad, y: y))
+                attributed.draw(at: CGPoint(x: startX(attributed.size().width), y: y))
                 y += attributed.size().height + 8 * u
             }
 
             // 空港コード風の大見出し(地名の先頭3文字)
-            if let code = Self.placeCode(from: options.placeName) {
+            if options.showPlaceName, let code = Self.placeCode(from: options.placeName) {
                 draw(code,
                      font: .systemFont(ofSize: 84 * u, weight: .heavy),
                      color: .white)
@@ -106,19 +141,21 @@ final class PhotoRenderer {
                      font: .systemFont(ofSize: 34 * u, weight: .heavy),
                      color: .white)
             }
-            if !options.placeName.isEmpty {
+            if options.showPlaceName && !options.placeName.isEmpty {
                 draw("📍 " + options.placeName,
                      font: .systemFont(ofSize: 36 * u, weight: .bold),
                      color: .white)
             }
-            if let coordinate = options.location?.coordinate {
+            if options.showCoordinates, let coordinate = options.location?.coordinate {
                 draw(coordinate.displayString,
                      font: .monospacedSystemFont(ofSize: 30 * u, weight: .semibold),
                      color: .white)
             }
-            draw(Self.displayDateFormatter.string(from: options.date),
-                 font: .systemFont(ofSize: 30 * u, weight: .medium),
-                 color: UIColor.white.withAlphaComponent(0.92))
+            if options.showDateTime {
+                draw(Self.displayDateFormatter.string(from: options.date),
+                     font: .systemFont(ofSize: 30 * u, weight: .medium),
+                     color: UIColor.white.withAlphaComponent(0.92))
+            }
 
             // 近くのスポット(日時の下)
             for place in options.nearbyPlaces {
@@ -127,11 +164,11 @@ final class PhotoRenderer {
                      color: UIColor.white.withAlphaComponent(0.9))
             }
 
-            // 左上情報の下に国境アウトライン地図を焼き込む(オフ時はスキップ)
+            // 情報の下に国境アウトライン地図を焼き込む(オフ時はスキップ)
             if options.mapEnabled, let coordinate = options.location?.coordinate {
                 let mapSide = size.width * 0.36
                 if let map = MapOutlineRenderer.image(for: coordinate, sidePx: mapSide, zoom: options.mapZoom) {
-                    map.draw(in: CGRect(x: pad, y: y + 12 * u,
+                    map.draw(in: CGRect(x: startX(mapSide), y: y + 12 * u,
                                         width: mapSide, height: mapSide))
                 }
             }
@@ -162,12 +199,16 @@ final class PhotoRenderer {
             let u = side / 1000.0
             let mapPad = side * 0.05
             var poiY = margin + mapPad
+            // 写真領域(白フチ内の正方形 [margin, margin+side])内で、指定インセットの左右起点 x。
+            func photoStartX(_ w: CGFloat, inset: CGFloat) -> CGFloat {
+                options.infoOnRight ? margin + side - inset - w : margin + inset
+            }
 
-            // 写真領域(白フチ内の正方形)左上に国境アウトライン地図を焼き込む(オフ時はスキップ)
+            // 写真領域(白フチ内の正方形)上部に国境アウトライン地図を焼き込む(オフ時はスキップ)
             if options.mapEnabled, let coordinate = options.location?.coordinate {
                 let mapSide = side * 0.34
                 if let map = MapOutlineRenderer.image(for: coordinate, sidePx: mapSide, zoom: options.mapZoom) {
-                    let origin = CGPoint(x: margin + mapPad,
+                    let origin = CGPoint(x: photoStartX(mapSide, inset: mapPad),
                                          y: margin + mapPad)
                     map.draw(in: CGRect(origin: origin,
                                         size: CGSize(width: mapSide, height: mapSide)))
@@ -188,7 +229,7 @@ final class PhotoRenderer {
                         .foregroundColor: UIColor.white.withAlphaComponent(0.92),
                         .shadow: poiShadow,
                     ])
-                    attributed.draw(at: CGPoint(x: margin + mapPad, y: poiY))
+                    attributed.draw(at: CGPoint(x: photoStartX(attributed.size().width, inset: mapPad), y: poiY))
                     poiY += attributed.size().height + 6 * u
                 }
             }
@@ -208,12 +249,13 @@ final class PhotoRenderer {
                     .font: font,
                     .foregroundColor: color,
                 ])
-                attributed.draw(at: CGPoint(x: textX, y: y))
+                let x = options.infoOnRight ? margin + side - 8 * u - attributed.size().width : textX
+                attributed.draw(at: CGPoint(x: x, y: y))
                 y += attributed.size().height + leftLineGap
             }
 
             // 空港コード風の大見出し(地名の先頭3文字)
-            if let code = Self.placeCode(from: options.placeName) {
+            if options.showPlaceName, let code = Self.placeCode(from: options.placeName) {
                 draw(code,
                      font: .systemFont(ofSize: codeSize, weight: .heavy),
                      color: ink)
@@ -224,7 +266,7 @@ final class PhotoRenderer {
                      font: .systemFont(ofSize: 32 * u, weight: .bold),
                      color: ink)
             }
-            if !options.placeName.isEmpty {
+            if options.showPlaceName && !options.placeName.isEmpty {
                 draw("📍 " + options.placeName,
                      font: .systemFont(ofSize: placeSize, weight: .bold),
                      color: ink)
@@ -235,13 +277,19 @@ final class PhotoRenderer {
                      font: .systemFont(ofSize: subtitleSize * 1.05, weight: .heavy),
                      color: ink)
             }
-            var subtitle = Self.displayDateFormatter.string(from: options.date)
-            if let coordinate = options.location?.coordinate {
-                subtitle += "   " + coordinate.displayString
+            // subtitle: 日時 + 座標をトグルで出し分け、両方 OFF なら行ごとスキップ
+            var subtitleParts: [String] = []
+            if options.showDateTime {
+                subtitleParts.append(Self.displayDateFormatter.string(from: options.date))
             }
-            draw(subtitle,
-                 font: .monospacedSystemFont(ofSize: subtitleSize, weight: .regular),
-                 color: ink.withAlphaComponent(0.65))
+            if options.showCoordinates, let coordinate = options.location?.coordinate {
+                subtitleParts.append(coordinate.displayString)
+            }
+            if !subtitleParts.isEmpty {
+                draw(subtitleParts.joined(separator: "   "),
+                     font: .monospacedSystemFont(ofSize: subtitleSize, weight: .regular),
+                     color: ink.withAlphaComponent(0.65))
+            }
         }
     }
 
@@ -252,6 +300,29 @@ final class PhotoRenderer {
         let letters = first.filter(\.isLetter)
         guard !letters.isEmpty else { return nil }
         return String(letters.prefix(3)).uppercased()
+    }
+
+    /// 指定アスペクト比(aspectW:aspectH = 幅:高さ)に中央クロップする。
+    private func centerCrop(_ image: UIImage, aspectW: CGFloat, aspectH: CGFloat) -> UIImage {
+        guard let cgImage = image.cgImage else { return image }
+        let width = CGFloat(cgImage.width)
+        let height = CGFloat(cgImage.height)
+        let targetRatio = aspectW / aspectH          // 幅/高さ
+        let currentRatio = width / height
+        var cropW = width
+        var cropH = height
+        if currentRatio > targetRatio {
+            // 横が広すぎる → 幅を削る
+            cropW = height * targetRatio
+        } else {
+            // 縦が高すぎる → 高さを削る
+            cropH = width / targetRatio
+        }
+        let rect = CGRect(x: (width - cropW) / 2,
+                          y: (height - cropH) / 2,
+                          width: cropW, height: cropH)
+        guard let cropped = cgImage.cropping(to: rect) else { return image }
+        return UIImage(cgImage: cropped)
     }
 
     private func centerCropSquare(_ image: UIImage) -> UIImage {
