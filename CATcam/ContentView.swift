@@ -13,6 +13,10 @@ struct ContentView: View {
 
     /// ポラロイドモード(デフォルト ON、切替状態は永続化)
     @AppStorage("polaroid") private var polaroid = true
+    /// 通常モードのアスペクト: false=9:16, true=4:5
+    @AppStorage("aspect45") private var aspect45 = false
+    /// 画面タップで撮影
+    @AppStorage("tapToShoot") private var tapToShoot = false
     /// 地図表示オン/オフ(永続化)
     @AppStorage("mapEnabled") private var mapEnabled = true
     /// オートシャッター(猫がこちらを向いたら自動撮影)。デフォルト OFF のオプトイン。
@@ -85,9 +89,15 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 preview
                     .frame(maxWidth: .infinity)
-                    .aspectRatio(polaroid ? 1.12 / 1.30 : 9.0 / 16.0, contentMode: .fit)
+                    .aspectRatio(polaroid ? 1.12 / 1.30 : (aspect45 ? 4.0 / 5.0 : 9.0 / 16.0), contentMode: .fit)
                     .clipped()
                     .animation(.easeInOut(duration: 0.2), value: polaroid)
+                    .animation(.easeInOut(duration: 0.2), value: aspect45)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard tapToShoot, camera.status == .running, !isSaving else { return }
+                        capture()
+                    }
                     .overlay(alignment: .topTrailing) {
                         // ヘルプボタン(右上、コントロールと干渉しない位置)
                         Button { Haptics.tick(); showHelp = true } label: {
@@ -513,13 +523,16 @@ struct ContentView: View {
 
                 Button {
                     Haptics.tick()
-                    polaroid.toggle()
+                    // 循環: ポラロイド → 9:16 → 4:5 → ポラロイド
+                    if polaroid { polaroid = false; aspect45 = false }
+                    else if !aspect45 { aspect45 = true }
+                    else { polaroid = true }
                 } label: {
                     VStack(spacing: 4) {
-                        Image(systemName: polaroid ? "square.fill" : "square")
+                        Image(systemName: polaroid ? "square.fill" : "rectangle.portrait")
                             .font(.system(size: 26))
-                        Text("Polaroid")
-                            .font(.system(size: 11, weight: .semibold))
+                        Text(polaroid ? "Polaroid" : (aspect45 ? "4:5" : "9:16"))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     }
                     .foregroundStyle(polaroid ? .yellow : .white)
                     .frame(width: 56, height: 56)
@@ -724,6 +737,8 @@ struct ContentView: View {
         }
 
         let options = CaptureOptions(polaroid: polaroid,
+                                     aspectW: aspect45 ? 4 : 9,
+                                     aspectH: aspect45 ? 5 : 16,
                                      intensity: intensity,
                                      location: locationManager.location,
                                      placeName: locationManager.placeName,
@@ -776,6 +791,7 @@ struct ContentView: View {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
         let currentPolaroid = polaroid
+        let currentAspect45 = aspect45
         let currentIntensity = intensity
         let currentMapZoom = mapZoom
         let currentMapEnabled = mapEnabled
@@ -793,6 +809,8 @@ struct ContentView: View {
                 location: location,
                 date: date,
                 polaroid: currentPolaroid,
+                aspectW: currentAspect45 ? 4 : 9,
+                aspectH: currentAspect45 ? 5 : 16,
                 intensity: currentIntensity,
                 mapZoom: currentMapZoom,
                 mapEnabled: currentMapEnabled,

@@ -11,6 +11,7 @@ struct POISettingsView: View {
     @AppStorage("showCoordinates") private var showCoordinates = true
     @AppStorage("showDateTime") private var showDateTime = true
     @AppStorage("infoOnRight") private var infoOnRight = false
+    @AppStorage("tapToShoot") private var tapToShoot = false
 
     // 近くのスポット設定
     @AppStorage("poiGenre") private var poiGenreRaw = POIGenre.food.rawValue
@@ -36,6 +37,13 @@ struct POISettingsView: View {
                         Text("右").tag(true)
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section("撮影") {
+                    Toggle("画面タップで撮影", isOn: $tapToShoot)
+                    Text("プレビューのどこをタップしてもシャッターを切ります。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("近くのスポット") {

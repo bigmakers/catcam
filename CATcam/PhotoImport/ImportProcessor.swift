@@ -28,6 +28,8 @@ enum ImportProcessor {
         location: CLLocation?,
         date: Date?,
         polaroid: Bool,
+        aspectW: CGFloat = 9,
+        aspectH: CGFloat = 16,
         intensity: Double,
         mapZoom: Double,
         mapEnabled: Bool,
@@ -59,6 +61,8 @@ enum ImportProcessor {
 
         let options = CaptureOptions(
             polaroid: polaroid,
+            aspectW: aspectW,
+            aspectH: aspectH,
             intensity: intensity,
             location: location,
             placeName: placeName,

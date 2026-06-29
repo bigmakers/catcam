@@ -7,6 +7,9 @@ import UniformTypeIdentifiers
 
 struct CaptureOptions {
     var polaroid: Bool
+    /// 通常モードのクロップ比(幅:高さ)。既定 9:16。
+    var aspectW: CGFloat = 9
+    var aspectH: CGFloat = 16
     var intensity: Double
     var location: CLLocation?
     var placeName: String
@@ -90,8 +93,8 @@ final class PhotoRenderer {
     // MARK: - 通常モード: 写真の左上に Passage 風のオーバーレイ
 
     private func composeOverlay(_ rawImage: UIImage, options: CaptureOptions) -> UIImage {
-        // 通常モードは縦長 9:16(ポートレート 16:9)にセンタークロップする
-        let image = centerCrop(rawImage, aspectW: 9, aspectH: 16)
+        // 通常モードは選択比(既定 9:16)にセンタークロップする
+        let image = centerCrop(rawImage, aspectW: options.aspectW, aspectH: options.aspectH)
         let size = image.size
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
