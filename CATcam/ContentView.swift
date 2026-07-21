@@ -43,9 +43,9 @@ struct ContentView: View {
     @AppStorage("mapZoom") private var mapZoom = 2.5
 
     /// 地名を焼き込むか(コード見出し + 📍行)
-    @AppStorage("showPlaceName") private var showPlaceName = true
+    @AppStorage("showPlaceName") private var showPlaceName = false
     /// 座標を焼き込むか
-    @AppStorage("showCoordinates") private var showCoordinates = true
+    @AppStorage("showCoordinates") private var showCoordinates = false
     /// 日時を焼き込むか
     @AppStorage("showDateTime") private var showDateTime = true
     /// 焼き込み情報を右端に寄せるか(false=左端)。表示設定と同一キー。
@@ -82,6 +82,14 @@ struct ContentView: View {
     /// フォトライブラリピッカー表示フラグ
     @State private var showPhotoPicker = false
 
+    // MARK: 100日マップ(SNS)
+    /// 100日マップ画面
+    @State private var showHundredMap = false
+    /// 撮影直後の投稿候補(バナーとComposerへ渡す)
+    @State private var pendingPost: PendingPost?
+    /// 投稿シート表示フラグ
+    @State private var showComposer = false
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -107,6 +115,27 @@ struct ContentView: View {
                                 .shadow(color: .black.opacity(0.4), radius: 3)
                         }
                         .padding(16)
+                    }
+                    .overlay(alignment: .topLeading) {
+                        // 100日マップ(左上)
+                        Button { Haptics.tick(); showHundredMap = true } label: {
+                            VStack(spacing: 2) {
+                                Image(systemName: "globe.asia.australia.fill")
+                                    .font(.system(size: 22, weight: .semibold))
+                                Text("100日").font(.system(size: 9, weight: .heavy))
+                            }
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            .shadow(color: .black.opacity(0.4), radius: 3)
+                        }
+                        .padding(12)
+                    }
+                    .overlay(alignment: .bottom) {
+                        // 撮影直後の投稿バナー
+                        if pendingPost != nil {
+                            postBanner.padding(.bottom, 10)
+                        }
                     }
                     .overlay(alignment: .top) {
                         // 猫の頭数バッジ(プレビュー上端中央。ヘルプ/左上 liveOverlay と干渉しない位置)
@@ -167,6 +196,52 @@ struct ContentView: View {
             }
             .ignoresSafeArea()
         }
+        .fullScreenCover(isPresented: $showHundredMap) {
+            HundredMapView(myLocation: locationManager.location) { showHundredMap = false }
+        }
+        .sheet(isPresented: $showComposer) {
+            if let p = pendingPost {
+                PostComposerView(imageData: p.data, thumbnail: p.thumbnail,
+                                 location: p.location, placeName: p.placeName,
+                                 initialComment: p.comment,
+                                 onClose: { showComposer = false },
+                                 onPosted: {
+                                     showComposer = false
+                                     pendingPost = nil
+                                     showHundredMap = true
+                                 })
+            }
+        }
+    }
+
+    /// 撮影直後に出す「100日マップに残す」バナー。
+    private var postBanner: some View {
+        HStack(spacing: 10) {
+            if let thumb = pendingPost?.thumbnail {
+                Image(uiImage: thumb).resizable().scaledToFill()
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            Button {
+                Haptics.tick()
+                showComposer = true
+            } label: {
+                Label("100日マップに残す", systemImage: "mappin.and.ellipse")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(Color.orange, in: Capsule())
+            }
+            Button {
+                withAnimation { pendingPost = nil }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20)).foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .padding(8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     // MARK: - Preview
@@ -763,6 +838,19 @@ struct ContentView: View {
                 PhotoSaver.save(data, location: options.location) { _ in
                     lastThumbnail = thumbnail
                     isSaving = false
+                    // 位置があれば100日マップへの投稿を提案(30秒で自動で引っ込む)
+                    if let loc = options.location, let thumb = thumbnail {
+                        withAnimation {
+                            pendingPost = PendingPost(data: data, thumbnail: thumb, location: loc,
+                                                      placeName: options.placeName, comment: options.comment)
+                        }
+                        let current = pendingPost?.id
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                            if pendingPost?.id == current, !showComposer {
+                                withAnimation { pendingPost = nil }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -834,4 +922,15 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+}
+
+
+/// 撮影直後の100日マップ投稿候補。
+struct PendingPost: Identifiable {
+    let id = UUID()
+    let data: Data
+    let thumbnail: UIImage
+    let location: CLLocation
+    let placeName: String
+    let comment: String
 }

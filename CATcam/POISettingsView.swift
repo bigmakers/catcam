@@ -7,8 +7,8 @@ struct POISettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     // 焼き込む情報トグル
-    @AppStorage("showPlaceName") private var showPlaceName = true
-    @AppStorage("showCoordinates") private var showCoordinates = true
+    @AppStorage("showPlaceName") private var showPlaceName = false
+    @AppStorage("showCoordinates") private var showCoordinates = false
     @AppStorage("showDateTime") private var showDateTime = true
     @AppStorage("infoOnRight") private var infoOnRight = false
     @AppStorage("tapToShoot") private var tapToShoot = false
