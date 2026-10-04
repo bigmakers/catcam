@@ -24,7 +24,6 @@ struct ContentView: View {
     @State private var isSaving = false
     @State private var flashOpacity = 0.0
     /// 直近の加工結果を全画面プレビュー表示するフラグ
-    @State private var showPreview = false
 
     /// ライブプレビュー用の国境アウトライン地図
     @State private var mapImage: UIImage?
@@ -153,16 +152,6 @@ struct ContentView: View {
                         }
                         .padding(16)
                     }
-                    .overlay(alignment: .topLeading) {
-                        // 猫ログ(アプリ内ギャラリー)入口
-                        Button { Haptics.tick(); showNekoLog = true } label: {
-                            Image(systemName: "pawprint.fill")
-                                .font(.system(size: 24))
-                                .foregroundStyle(.white.opacity(0.75))
-                                .shadow(color: .black.opacity(0.4), radius: 3)
-                        }
-                        .padding(16)
-                    }
                     .overlay(alignment: .bottom) {
                         // Before/After 比較中の表示
                         if isComparing {
@@ -191,6 +180,13 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            // 左下サムネイル(猫ログ入口)に前回までの最新一枚を出す
+            if lastThumbnail == nil, let newest = NekoLogStore.shared.entries.first {
+                Task.detached(priority: .utility) {
+                    let thumb = NekoLogStore.shared.thumbnail(for: newest, maxPixel: 112)
+                    await MainActor.run { if lastThumbnail == nil { lastThumbnail = thumb } }
+                }
+            }
             camera.select(focal: focal)   // start 前に呼ぶ(同一シリアルキューで順に適用される)
             camera.start()
             locationManager.start()
@@ -215,11 +211,6 @@ struct ContentView: View {
             NekoLogView { showNekoLog = false }
         }
         .sheet(isPresented: $showPOISettings) { POISettingsView() }
-        .fullScreenCover(isPresented: $showPreview) {
-            if let lastThumbnail {
-                ResultPreviewView(image: lastThumbnail) { showPreview = false }
-            }
-        }
         .sheet(isPresented: $showPhotoPicker) {
             PhotoLibraryPicker { image, location, date in
                 showPhotoPicker = false
@@ -235,7 +226,13 @@ struct ContentView: View {
 
     @ViewBuilder
     private var preview: some View {
-        normalPreview
+        Group {
+            if cropAspect == .polaroid {
+                polaroidPreview
+            } else {
+                normalPreview
+            }
+        }
             .overlay(
                 Color.white
                     .opacity(flashOpacity)
@@ -320,7 +317,7 @@ struct ContentView: View {
 
     /// カメラ映像 or 権限メッセージ。
     @ViewBuilder
-    private func cameraLayer() -> some View {
+    private func cameraLayer(squareCrop: Bool = false) -> some View {
         switch camera.status {
         case .denied:
             permissionMessage("カメラへのアクセスが許可されていません。\n設定アプリから許可してください。")
@@ -331,8 +328,132 @@ struct ContentView: View {
                              intensity: isComparing ? 0 : intensity,
                              coolness: isComparing ? 0 : coolness,
                              sim: filmSim,
-                             squareCrop: false)
+                             squareCrop: squareCrop)
         }
+    }
+
+    // MARK: - ポラロイドモードのライブプレビュー
+
+    /// composePolaroid と同じ寸法でライブプレビューを構成する。
+    /// 全体幅 W に対し photoSide = W / 1.12、margin = photoSide * 0.06。
+    /// キャンバス比率 = (side*1.12) : (side*1.30) は body 側の aspectRatio(previewRatio) が担う。
+    private var polaroidPreview: some View {
+        GeometryReader { geo in
+            let totalWidth = geo.size.width
+            let photoSide = totalWidth / 1.12
+            let margin = photoSide * 0.06
+            let mapSide = photoSide * 0.34
+            let mapPad = photoSide * 0.05
+
+            VStack(alignment: .leading, spacing: 0) {
+                // 上部: 上・左・右 margin の白フチ内に正方形カメラ映像。
+                // 映像左上(または右上)に地図を重ね、ピンチズームを維持する。
+                ZStack(alignment: infoOnRight ? .topTrailing : .topLeading) {
+                    cameraLayer(squareCrop: true)
+                        .frame(width: photoSide, height: photoSide)
+                        .clipped()
+
+                    // 地図 + その下に近くのスポット(composePolaroid と同じ配置)
+                    VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.012) {
+                        if mapEnabled, let mapImage {
+                            Image(uiImage: mapImage)
+                                .resizable()
+                                .frame(width: mapSide, height: mapSide)
+                                .contentShape(Rectangle())
+                                .gesture(mapZoomGesture)
+                        }
+                        polaroidPlaces(photoSide: photoSide)
+                    }
+                    .offset(x: infoOnRight ? -mapPad : mapPad, y: mapPad)
+                }
+                .padding(.top, margin)
+                .padding(.horizontal, margin)
+
+                // 下帯キャプション
+                polaroidCaption(photoSide: photoSide)
+                    .frame(maxWidth: .infinity, alignment: infoOnRight ? .trailing : .leading)
+                    .padding(infoOnRight ? .trailing : .leading, margin + photoSide * 0.008)
+                    .padding(.top, photoSide * 0.03)
+
+                Spacer(minLength: 0)
+            }
+            .frame(width: totalWidth, height: geo.size.height, alignment: .topLeading)
+            .background(Color(white: 0.97))
+        }
+        // プレビュータップでキーボードを閉じる
+        .onTapGesture { commentFocused = false }
+    }
+
+    /// composePolaroid の下帯テキスト(地名コード / コメント / 📍地名 / 日時 + 座標)。
+    /// フォントサイズは photoSide 基準で composePolaroid (64/36/27 * side/1000) と一致。
+    @ViewBuilder
+    private func polaroidCaption(photoSide: CGFloat) -> some View {
+        let ink = Color(white: 0.22)
+        let hasComment = !commentText.isEmpty
+        // コメント有無で composePolaroid に合わせてフォントサイズを切り替える
+        let codeRatio: CGFloat = hasComment ? 0.056 : 0.064
+        let placeRatio: CGFloat = hasComment ? 0.030 : 0.036
+        let subtitleRatio: CGFloat = hasComment ? 0.024 : 0.027
+        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.01) {
+            if showPlaceName, let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
+                Text(code)
+                    .font(.system(size: photoSide * codeRatio, weight: .heavy))
+                    .foregroundStyle(ink)
+            }
+            if hasComment {
+                // composePolaroid と同じ縮小則(1行=32u、行が増えるごとに -5u、最大4行)
+                let lines = commentText.split(separator: "\n", omittingEmptySubsequences: false).prefix(4)
+                let n = max(1, lines.count)
+                let cSize = photoSide * (32 - CGFloat(n - 1) * 5) / 1000.0
+                Text(lines.joined(separator: "\n"))
+                    .font(.system(size: cSize,
+                                  weight: commentFontStyle.swiftWeight,
+                                  design: commentFontStyle.design))
+                    .tracking(cSize * commentFontStyle.trackingRatio)
+                    .foregroundStyle(ink)
+                    .multilineTextAlignment(infoOnRight ? .trailing : .leading)
+                    .lineLimit(4)
+            }
+            if showPlaceName, !locationManager.placeName.isEmpty {
+                Text("📍 \(locationManager.placeName)")
+                    .font(.system(size: photoSide * placeRatio, weight: .bold))
+                    .foregroundStyle(ink)
+            }
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                let subtitle = captionSubtitle(date: context.date)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: photoSide * subtitleRatio, weight: .regular, design: .monospaced))
+                        .foregroundStyle(ink.opacity(0.65))
+                }
+            }
+        }
+    }
+
+    /// 写真上(地図の下)の近くのスポット表示(composePolaroid の配置に対応)。
+    @ViewBuilder
+    private func polaroidPlaces(photoSide: CGFloat) -> some View {
+        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.006) {
+            ForEach(nearbyManager.places.map(\.display), id: \.self) { place in
+                Text("・" + place)
+                    .font(.system(size: photoSide * 0.026, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(color: .black.opacity(0.55), radius: 3, y: 1)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    /// 下帯末尾行: 日時 +(座標があれば)"   " + 座標。composePolaroid と同一の組み立て。
+    private func captionSubtitle(date: Date) -> String {
+        var parts: [String] = []
+        if showDateTime {
+            parts.append(PhotoRenderer.displayDateFormatter.string(from: date))
+        }
+        if showCoordinates, let coordinate = locationManager.location?.coordinate {
+            parts.append(coordinate.displayString)
+        }
+        return parts.joined(separator: "   ")
     }
 
     /// 地図ピンチズーム。開始時の倍率を基準に 1...8 へクランプし、その都度再生成。
@@ -429,12 +550,14 @@ struct ContentView: View {
                     cropAspectRaw = next.rawValue
                 } label: {
                     VStack(spacing: 4) {
-                        Image(systemName: "aspectratio")
+                        Image(systemName: cropAspect == .polaroid ? "square.fill" : "aspectratio")
                             .font(.system(size: 22))
                         Text(cropAspect.label)
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(cropAspect == .polaroid ? .yellow : .white)
                     .frame(width: 56, height: 56)
                 }
             }
@@ -630,15 +753,11 @@ struct ContentView: View {
         .opacity(camera.status == .running && !isSaving ? 1 : 0.4)
     }
 
-    /// タップで直近の加工結果を全画面プレビュー(無ければ写真アプリを開く)
+    /// タップでアプリ内ギャラリー「猫ログ」を開く(直近の一枚をサムネイル表示)
     private var thumbnail: some View {
         Button {
             Haptics.tick()
-            if lastThumbnail != nil {
-                showPreview = true
-            } else if let url = URL(string: "photos-redirect://") {
-                UIApplication.shared.open(url)
-            }
+            showNekoLog = true
         } label: {
             if let lastThumbnail {
                 Image(uiImage: lastThumbnail)
@@ -706,6 +825,7 @@ struct ContentView: View {
         let options = CaptureOptions(
             aspectW: aspect.w,
             aspectH: aspect.h,
+            polaroid: aspect == .polaroid,
             intensity: intensity,
             coolness: coolness,
             sim: filmSim,
@@ -786,6 +906,7 @@ struct ContentView: View {
                 date: date,
                 aspectW: aspect.w,
                 aspectH: aspect.h,
+                polaroid: aspect == .polaroid,
                 intensity: currentIntensity,
                 coolness: currentCoolness,
                 sim: currentSim,

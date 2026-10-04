@@ -7,6 +7,13 @@ import Foundation
 /// 名称はすべて自前(Fujifilm 等の登録商標は使わない)。
 /// 見た目の狙いだけをパラメータで表現している。
 enum FilmSimulation: String, CaseIterable, Identifiable {
+    // 毛並みフィルタ(猫の毛を立てる主役プリセット群。ダイヤル先頭に出す)
+    case steel
+    case titanium
+    case chromeMetal
+    case gunmetal
+    case copper
+    // フィルムシリーズ
     case standard
     case vivid
     case soft
@@ -18,12 +25,6 @@ enum FilmSimulation: String, CaseIterable, Identifiable {
     case mono
     case monoRed
     case sepia
-    // METAL シリーズ(金属の質感表現。フィルムではなく「素材の解釈」のプリセット)
-    case steel
-    case titanium
-    case chromeMetal
-    case gunmetal
-    case copper
 
     var id: String { rawValue }
 

@@ -30,6 +30,7 @@ enum ImportProcessor {
         date: Date?,
         aspectW: CGFloat,
         aspectH: CGFloat,
+        polaroid: Bool = false,
         intensity: Double,
         coolness: Double = 0,
         sim: FilmSimulation = .standard,
@@ -70,6 +71,7 @@ enum ImportProcessor {
         let options = CaptureOptions(
             aspectW: aspectW,
             aspectH: aspectH,
+            polaroid: polaroid,
             intensity: intensity,
             coolness: coolness,
             sim: sim,

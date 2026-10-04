@@ -42,8 +42,8 @@ struct HelpView: View {
         ),
         HelpItem(
             icon: "rectangle.ratio.16.to.9",
-            title: "アスペクト比",
-            description: "右下のボタンで 4:3 / 16:9 / 1:1 を切り替えます。横向きに構えると写真も横位置で出力されます。"
+            title: "アスペクト比・ポラロイド",
+            description: "右下のボタンで 4:3 / 16:9 / 1:1 / Polaroid を切り替えます。Polaroid は真四角の写真を白フチで額装し、下帯に地名・コメント・日時を印字します。横向きに構えると写真も横位置で出力されます(Polaroid 以外)。"
         ),
         HelpItem(
             icon: "mappin.and.ellipse",
@@ -58,7 +58,7 @@ struct HelpView: View {
         HelpItem(
             icon: "film.stack",
             title: "フィルムシミュレーション(16種)",
-            description: "撮影画面のいちばん上のダイヤルで切り替えます。フィルム11種(STANDARD / VIVID / SOFT / CLASSIC / NEG. STD / NEG. HI / NOSTALGIC / CINEMA / MONO / MONO+R / SEPIA)に加え、毛並みを立てる「毛並みフィルタ」5種(SILVER / SMOKE / TSUYA / KURO / CHATORA)。プレビューにそのまま反映され、見たままが保存されます。"
+            description: "撮影画面のいちばん上のダイヤルで切り替えます。先頭は毛並みを立てる「毛並みフィルタ」5種(SILVER / SMOKE / TSUYA / KURO / CHATORA)、続いてフィルム11種(STANDARD / VIVID / SOFT / CLASSIC / NEG. STD / NEG. HI / NOSTALGIC / CINEMA / MONO / MONO+R / SEPIA)。プレビューにそのまま反映され、見たままが保存されます。"
         ),
         HelpItem(
             icon: "pawprint.fill",
@@ -88,7 +88,7 @@ struct HelpView: View {
         HelpItem(
             icon: "pawprint",
             title: "猫ログ",
-            description: "撮った一枚は自動でアプリ内の「猫ログ」にも記録されます(端末内のみ・外部送信なし)。左上のボタンから、いつどこで撮った猫かを一覧で振り返れます。"
+            description: "撮った一枚は自動でアプリ内の「猫ログ」にも記録されます(端末内のみ・外部送信なし)。左下のサムネイルをタップすると、いつどこで撮った猫かを一覧で振り返れます。"
         ),
         HelpItem(
             icon: "fork.knife",
