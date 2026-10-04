@@ -6,6 +6,8 @@ import CoreImage
 struct MetalPreviewView: UIViewRepresentable {
     @ObservedObject var camera: CameraManager
     var intensity: Double
+    var coolness: Double
+    var sim: FilmSimulation
     var squareCrop: Bool
 
     func makeCoordinator() -> Renderer {
@@ -28,18 +30,29 @@ struct MetalPreviewView: UIViewRepresentable {
 
     func updateUIView(_ uiView: MTKView, context: Context) {
         context.coordinator.intensity = intensity
+        context.coordinator.coolness = coolness
+        context.coordinator.sim = sim
         context.coordinator.squareCrop = squareCrop
     }
 
     final class Renderer: NSObject, MTKViewDelegate {
         let device = MTLCreateSystemDefaultDevice()
         var intensity: Double = 1.0
+        var coolness: Double = 0.0
+        var sim: FilmSimulation = .standard
         var squareCrop = false
 
         private lazy var commandQueue = device?.makeCommandQueue()
         private lazy var ciContext: CIContext? = {
             guard let device else { return nil }
-            return CIContext(mtlDevice: device, options: [.cacheIntermediates: false])
+            // 作業色空間を sRGB に固定する。既定はリニアで、そこで階調カーブや
+            // シャドウリフトを掛けると黒が浮いて霞み、暗部の色被りが暴れる。
+            // フィルムのトーンは表示基準(ガンマ済み)で設計しているので、ここを合わせる。
+            // PhotoRenderer と同じ設定にしてあり、プレビューと保存が一致する。
+            return CIContext(mtlDevice: device, options: [
+                .cacheIntermediates: false,
+                .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+            ])
         }()
 
         private let lock = NSLock()
@@ -55,7 +68,7 @@ struct MetalPreviewView: UIViewRepresentable {
 
         func draw(in view: MTKView) {
             lock.lock()
-            var image = latestImage
+            let image = latestImage
             lock.unlock()
 
             guard var input = image,
@@ -64,7 +77,7 @@ struct MetalPreviewView: UIViewRepresentable {
                   let drawable = view.currentDrawable,
                   view.drawableSize.width > 0, view.drawableSize.height > 0 else { return }
 
-            input = NoirFilmFilter.shared.apply(to: input, intensity: intensity)
+            input = FilmSimulationFilter.shared.apply(to: input, sim: sim, intensity: intensity, coolness: coolness)
 
             if squareCrop {
                 let side = min(input.extent.width, input.extent.height)
@@ -84,7 +97,7 @@ struct MetalPreviewView: UIViewRepresentable {
                 translationX: (drawableSize.width - input.extent.width) / 2 - input.extent.origin.x,
                 y: (drawableSize.height - input.extent.height) / 2 - input.extent.origin.y))
 
-            // フィル後のはみ出し部分が前フレームのまま残らないよう黒背景に合成する
+            // レターボックス部分が前フレームのまま残らないよう黒背景に合成する
             input = input.composited(over: CIImage(color: .black)
                 .cropped(to: CGRect(origin: .zero, size: drawableSize)))
 

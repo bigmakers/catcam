@@ -86,6 +86,21 @@ final class NearbyPlacesManager: ObservableObject {
         lastGenre = genre
         lastCount = count
 
+        // まず OpenPOI API(日本全国337万件・キー不要)で探し、
+        // 空(海外・圏外・エラー・非対応ジャンル)なら Apple 検索へフォールバックする。
+        Task { [weak self] in
+            let openPOI = await OpenPOIService.fetchNearby(location: location, genre: genre, count: count)
+            guard let self else { return }
+            if !openPOI.isEmpty {
+                await MainActor.run { self.places = openPOI }
+            } else {
+                self.fetchWithAppleSearch(location: location, genre: genre, count: count)
+            }
+        }
+    }
+
+    /// Apple(MKLocalSearch)での周辺検索。OpenPOI が使えないときのフォールバック。
+    private func fetchWithAppleSearch(location: CLLocation, genre: POIGenre, count: Int) {
         let region = MKCoordinateRegion(center: location.coordinate,
                                         latitudinalMeters: 500,
                                         longitudinalMeters: 500)

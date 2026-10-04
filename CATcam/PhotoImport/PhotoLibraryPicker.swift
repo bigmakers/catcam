@@ -50,9 +50,8 @@ struct PhotoLibraryPicker: UIViewControllerRepresentable {
         }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            // dismiss は SwiftUI 側(sheet の isPresented=false)に任せる。
-            // ここで手動 dismiss すると、シート内シート(プロフィールのアバター選択等)で
-            // 外側の画面ごと閉じてアプリが落ちたように見える(SerenDPで実機確認済みの罠)。
+            // 手動 dismiss は行わない(シート内シートで外側ごと閉じる罠)。
+            // 表示側の SwiftUI @State(isPresented)で閉じること。
             guard let result = results.first else {
                 cancel()
                 return

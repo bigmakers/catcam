@@ -14,21 +14,31 @@ enum MapOutlineRenderer {
     /// 国境アウトライン + 現在地マーカーを透明背景の正方形 UIImage で返す。
     /// zoom > 1 で現在地中心にズームする(1=国全体フィット, 最大 8 倍)。
     static func image(for coordinate: CLLocationCoordinate2D, sidePx: CGFloat, zoom: Double = 1) -> UIImage? {
-        let shapes = CountryShapes.shared
-        shapes.loadIfNeeded()
+        StateShapes.shared.loadIfNeeded()
+        CountryShapes.shared.loadIfNeeded()
 
-        guard let base = shapes.country(containing: coordinate)
-            ?? shapes.nearestCountry(to: coordinate) else {
+        // 基準シェイプ: 都道府県/州(admin-1)を優先し、無ければ国にフォールバック。
+        let baseBBox: CountryShapes.BBox
+        let useStates: Bool
+        if let st = StateShapes.shared.region(containing: coordinate)
+            ?? StateShapes.shared.nearestRegion(to: coordinate) {
+            baseBBox = st.bbox
+            useStates = true
+        } else if let c = CountryShapes.shared.country(containing: coordinate)
+            ?? CountryShapes.shared.nearestCountry(to: coordinate) {
+            baseBBox = c.bbox
+            useStates = false
+        } else {
             return nil
         }
 
         var xLo: Double, xHi: Double, yMin: Double, yMax: Double, span: Double
 
-        // ビューポート: 基準国の bbox を現在地を含むよう拡張 → 8% パディング
-        var minLon = min(base.bbox.minLon, coordinate.longitude)
-        var maxLon = max(base.bbox.maxLon, coordinate.longitude)
-        var minLat = min(base.bbox.minLat, coordinate.latitude)
-        var maxLat = max(base.bbox.maxLat, coordinate.latitude)
+        // ビューポート: 基準シェイプの bbox を現在地を含むよう拡張 → 8% パディング
+        var minLon = min(baseBBox.minLon, coordinate.longitude)
+        var maxLon = max(baseBBox.maxLon, coordinate.longitude)
+        var minLat = min(baseBBox.minLat, coordinate.latitude)
+        var maxLat = max(baseBBox.maxLat, coordinate.latitude)
 
         let padLon = (maxLon - minLon) * 0.08
         let padLat = (maxLat - minLat) * 0.08
@@ -86,7 +96,10 @@ enum MapOutlineRenderer {
                                           minLat: inverseMercatorLat(yMin),
                                           maxLon: xHi * 180 / .pi,
                                           maxLat: inverseMercatorLat(yMax))
-        let visible = shapes.countries(intersecting: viewport)
+        // 描画対象リング群: 州優先(無ければ国)。
+        let visible: [[[SIMD2<Double>]]] = useStates
+            ? StateShapes.shared.regions(intersecting: viewport).map { $0.polys }
+            : CountryShapes.shared.countries(intersecting: viewport).map { $0.polys }
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -105,8 +118,8 @@ enum MapOutlineRenderer {
                          color: UIColor.black.withAlphaComponent(0.5).cgColor)
             cg.setStrokeColor(UIColor.white.withAlphaComponent(0.95).cgColor)
 
-            for country in visible {
-                for ring in country.polys {
+            for polys in visible {
+                for ring in polys {
                     guard ring.count >= 2 else { continue }
                     var started = false
                     var prevLon = 0.0

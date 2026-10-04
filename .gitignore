@@ -13,3 +13,5 @@ DerivedData/
 store/screenshots/in/
 store/screenshots/out/
 store/screenshots/out-*/
+/build-sim/
+tools/__pycache__/

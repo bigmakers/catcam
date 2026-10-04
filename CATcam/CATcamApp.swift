@@ -6,6 +6,11 @@ struct CATcamApp: App {
         WindowGroup {
             ContentView()
                 .preferredColorScheme(.dark)
+                .task {
+                    #if targetEnvironment(simulator)
+                    await DemoRender.runIfRequested()
+                    #endif
+                }
         }
     }
 }

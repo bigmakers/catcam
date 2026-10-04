@@ -23,13 +23,13 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>猫を検出して頭数を数え、地名・地図とともに写真へ記録するためにカメラを使用します。例:猫にカメラを向けると頭数が表示され、シャッターを押すと「ここで2匹見つけた」と地名つきで写真に焼き込まれます。</string>
+	<string>猫の毛並みを強調するフィルタを適用した写真を撮影し、地名・座標・地図を重ねて記録するためにカメラを使用します。例:猫にカメラを向けてシャッターを押すと、毛並みフィルタで仕上げた一枚が保存されます。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>猫を見つけた場所の地名と座標を写真や地図に記録するために位置情報を使用します。例:撮影場所が「Tokyo, Japan / 35.68°N, 139.69°E」として写真に焼き込まれます。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>猫の頭数や地名・地図を焼き込んで作成した写真をフォトライブラリに保存するために使用します。例:シャッター後、加工済みの一枚がカメラロールに追加されます。</string>
+	<string>毛並みフィルタや地名・地図を焼き込んで作成した写真をフォトライブラリに保存するために使用します。例:シャッター後、加工済みの一枚がカメラロールに追加されます。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>フォトライブラリの写真を取り込み、猫の頭数・地名・地図を焼き込んで保存するために使用します。例:過去に撮った猫の写真を選んでCATcam風に加工できます。</string>
+	<string>フォトライブラリの写真を取り込み、毛並みフィルタや地名・地図を焼き込んで保存するために使用します。例:過去に撮った猫の写真を選んでCATcam風に加工できます。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

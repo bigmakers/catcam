@@ -1,3 +1,4 @@
+import CoreGraphics
 import CoreLocation
 import MapKit
 import Photos
@@ -11,7 +12,8 @@ enum ImportProcessor {
     ///   - image: 選択・正立済みの UIImage
     ///   - location: PHAsset / EXIF から取得した撮影位置 (nil 可)
     ///   - date: PHAsset / EXIF から取得した撮影日時 (nil 可)
-    ///   - polaroid: ポラロイドモード
+    ///   - aspectW: クロップ幅比
+    ///   - aspectH: クロップ高さ比
     ///   - intensity: ノワール強度 0–1
     ///   - mapZoom: 地図ズーム倍率
     ///   - mapEnabled: 地図オーバーレイ有効か
@@ -21,24 +23,25 @@ enum ImportProcessor {
     ///   - showPlaceName: 地名を焼き込むか
     ///   - showCoordinates: 座標を焼き込むか
     ///   - showDateTime: 日時を焼き込むか
-    ///   - infoOnRight: 焼き込み情報を右端に寄せるか
     /// - Returns: 保存後のサムネイル用 UIImage（失敗時 nil）
     static func process(
         image: UIImage,
         location: CLLocation?,
         date: Date?,
-        polaroid: Bool,
-        aspectW: CGFloat = 9,
-        aspectH: CGFloat = 16,
+        aspectW: CGFloat,
+        aspectH: CGFloat,
         intensity: Double,
+        coolness: Double = 0,
+        sim: FilmSimulation = .standard,
+        commentFont: CommentFont = .minchoEditorial,
         mapZoom: Double,
         mapEnabled: Bool,
         comment: String,
         poiGenre: POIGenre,
         poiCount: Int,
-        showPlaceName: Bool = true,
-        showCoordinates: Bool = true,
-        showDateTime: Bool = true,
+        showPlaceName: Bool = false,
+        showCoordinates: Bool = false,
+        showDateTime: Bool = false,
         infoOnRight: Bool = false
     ) async -> UIImage? {
         let resolvedDate = date ?? Date()
@@ -52,18 +55,26 @@ enum ImportProcessor {
             effectiveMapEnabled = mapEnabled
             // 逆ジオコーディング
             placeName = await reverseGeocode(location: loc)
-            // POI 検索
+            // POI 検索(OpenPOI 優先 → Apple フォールバック。NearbyPlacesManager と同方針)
             if poiGenre != .none {
-                nearbyPlaces = await fetchNearbyPlaces(
+                let openPOI = await OpenPOIService.fetchNearby(
                     location: loc, genre: poiGenre, count: poiCount)
+                nearbyPlaces = openPOI.map(\.display)
+                if nearbyPlaces.isEmpty {
+                    nearbyPlaces = await fetchNearbyPlaces(
+                        location: loc, genre: poiGenre, count: poiCount)
+                }
             }
         }
 
         let options = CaptureOptions(
-            polaroid: polaroid,
             aspectW: aspectW,
             aspectH: aspectH,
             intensity: intensity,
+            coolness: coolness,
+            sim: sim,
+            commentFont: commentFont,
+            infoOnRight: infoOnRight,
             location: location,
             placeName: placeName,
             date: resolvedDate,
@@ -73,8 +84,7 @@ enum ImportProcessor {
             nearbyPlaces: nearbyPlaces,
             showPlaceName: showPlaceName,
             showCoordinates: showCoordinates,
-            showDateTime: showDateTime,
-            infoOnRight: infoOnRight
+            showDateTime: showDateTime
         )
 
         // レンダリング(バックグラウンドスレッドで)
@@ -93,12 +103,14 @@ enum ImportProcessor {
         }
 
         guard saved else { return nil }
+        // アプリ内ギャラリー「猫ログ」にも記録(端末内のみ)
+        NekoLogStore.shared.add(data: data, date: resolvedDate, place: placeName)
         return UIImage(data: data)
     }
 
     // MARK: - 逆ジオコーディング (LocationManager と同一ロジック)
 
-    private static func reverseGeocode(location: CLLocation) async -> String {
+    static func reverseGeocode(location: CLLocation) async -> String {
         await withCheckedContinuation { continuation in
             let geocoder = CLGeocoder()
             geocoder.reverseGeocodeLocation(

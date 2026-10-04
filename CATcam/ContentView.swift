@@ -6,26 +6,20 @@ struct ContentView: View {
     @StateObject private var camera = CameraManager()
     @StateObject private var locationManager = LocationManager()
     @StateObject private var nearbyManager = NearbyPlacesManager()
-    /// Vision による猫検出(プレビューの頭数バッジ + 焼き込み用)
-    @StateObject private var catDetector = CatDetector()
-    /// 猫を振り向かせる呼び鈴(合成音を再生)
-    @StateObject private var catCaller = CatCaller()
 
-    /// ポラロイドモード(デフォルト ON、切替状態は永続化)
-    @AppStorage("polaroid") private var polaroid = true
-    /// 通常モードのアスペクト: false=9:16, true=4:5
-    @AppStorage("aspect45") private var aspect45 = false
-    /// 画面タップで撮影
-    @AppStorage("tapToShoot") private var tapToShoot = false
+    /// アスペクト比(rawValue を AppStorage で永続化)
+    @AppStorage("cropAspect") private var cropAspectRaw = CropAspect.r43.rawValue
+    private var cropAspect: CropAspect { CropAspect(rawValue: cropAspectRaw) ?? .r43 }
+
     /// 地図表示オン/オフ(永続化)
-    @AppStorage("mapEnabled") private var mapEnabled = true
-    /// オートシャッター(猫がこちらを向いたら自動撮影)。デフォルト OFF のオプトイン。
-    @AppStorage("autoShutter") private var autoShutter = false
-    /// 直近のオート撮影時刻(連続撮影防止のクールダウン用)
-    @State private var lastAutoCaptureDate: Date?
-    /// オート撮影が armed のとき、猫が向いた瞬間に出す一瞬のヒント表示
-    @State private var showAutoHint = false
-    @State private var intensity = 0.8
+    @AppStorage("mapEnabled") private var mapEnabled = false
+    /// フィルム強度(コントラスト/グレイン/減光)。設定シートで調整。
+    @AppStorage("filmIntensity") private var intensity = 0.8
+    /// 色温度(寒色強度)。0=標準, 1=最大寒色
+    @AppStorage("coolness") private var coolness = 0.35
+    /// フィルムシミュレーション(rawValue を永続化)
+    @AppStorage("filmSim") private var filmSimRaw = FilmSimulation.standard.rawValue
+    private var filmSim: FilmSimulation { FilmSimulation(rawValue: filmSimRaw) ?? .standard }
     @State private var lastThumbnail: UIImage?
     @State private var isSaving = false
     @State private var flashOpacity = 0.0
@@ -47,7 +41,7 @@ struct ContentView: View {
     /// 座標を焼き込むか
     @AppStorage("showCoordinates") private var showCoordinates = false
     /// 日時を焼き込むか
-    @AppStorage("showDateTime") private var showDateTime = true
+    @AppStorage("showDateTime") private var showDateTime = false
     /// 焼き込み情報を右端に寄せるか(false=左端)。表示設定と同一キー。
     @AppStorage("infoOnRight") private var infoOnRight = false
 
@@ -59,20 +53,61 @@ struct ContentView: View {
     /// 近くのスポット設定シート表示フラグ
     @State private var showPOISettings = false
     /// 近くのスポットのジャンル(永続化、POISettingsView と整合)
-    @AppStorage("poiGenre") private var poiGenreRaw = POIGenre.food.rawValue
+    @AppStorage("poiGenre") private var poiGenreRaw = POIGenre.none.rawValue
     /// 近くのスポットの表示件数(永続化)
     @AppStorage("poiCount") private var poiCount = 3
 
     /// 写真に焼き込むコメント(撮影後も自動クリアしない)
     @State private var commentText = ""
+    /// コメント入力のフォーカス(キーボード表示制御)
+    @FocusState private var commentFocused: Bool
+    /// コメント書体(雑誌風)。表示設定と同一キーで同期。
+    @AppStorage("commentFont") private var commentFontRaw = CommentFont.minchoEditorial.rawValue
+    private var commentFontStyle: CommentFont { CommentFont.resolve(commentFontRaw) }
 
-    /// 呼び鈴で選択中のサウンド(永続化)
-    @AppStorage("catSound") private var catSoundRaw = CatCaller.Sound.squeak.rawValue
-    /// rawValue → Sound 変換
-    private var catSound: CatCaller.Sound { CatCaller.Sound(rawValue: catSoundRaw) ?? .squeak }
+    /// 端末の向き(情報ブロックの回転に使う。写真自体は無回転)。
+    @State private var deviceOrientation: UIDeviceOrientation = .portrait
+    /// 出力画像を端末の向きに合わせて回す量(時計回りの90°単位)。横持ち撮影で横向き出力に。
+    private var captureQuarterTurns: Int {
+        switch deviceOrientation {
+        case .landscapeLeft:       return 3
+        case .landscapeRight:      return 1
+        case .portraitUpsideDown:  return 2
+        default:                   return 0
+        }
+    }
+    /// プレビューの文字情報だけを端末の向きに合わせて回す角度(被写体は回転しない)。
+    private var infoAngle: Angle {
+        switch deviceOrientation {
+        case .landscapeLeft:       return .degrees(90)
+        case .landscapeRight:      return .degrees(-90)
+        case .portraitUpsideDown:  return .degrees(180)
+        default:                   return .degrees(0)
+        }
+    }
+    /// 回した情報ブロックのアンカー(左:top-left / 右:top-right)を、向き+左右に対応する隅へ移す平行移動量。
+    private func infoOffset(_ size: CGSize) -> CGSize {
+        let W = size.width, H = size.height
+        if infoOnRight {
+            // アンカーはブロックの top-right(= フレーム右上 (W,0))。目的隅 - (W,0)
+            switch captureQuarterTurns {
+            case 1:  return CGSize(width: -W, height: 0)   // 目的=左上(0,0)
+            case 2:  return CGSize(width: -W, height: H)   // 目的=左下(0,H)
+            case 3:  return CGSize(width: 0,  height: H)   // 目的=右下(W,H)
+            default: return .zero                          // 目的=右上(W,0)
+            }
+        } else {
+            switch captureQuarterTurns {
+            case 1:  return CGSize(width: 0, height: H)
+            case 2:  return CGSize(width: W, height: H)
+            case 3:  return CGSize(width: W, height: 0)
+            default: return .zero
+            }
+        }
+    }
 
     /// 現在のジャンル(rawValue → enum)
-    private var poiGenre: POIGenre { POIGenre(rawValue: poiGenreRaw) ?? .food }
+    private var poiGenre: POIGenre { POIGenre(rawValue: poiGenreRaw) ?? .none }
 
     /// ピンチ開始時の基準倍率(ジェスチャ中のみ非 nil)
     @State private var gestureBaseZoom: Double?
@@ -82,13 +117,21 @@ struct ContentView: View {
     /// フォトライブラリピッカー表示フラグ
     @State private var showPhotoPicker = false
 
-    // MARK: 100日マップ(SNS)
-    /// 100日マップ画面
-    @State private var showHundredMap = false
-    /// 撮影直後の投稿候補(バナーとComposerへ渡す)
-    @State private var pendingPost: PendingPost?
-    /// 投稿シート表示フラグ
-    @State private var showComposer = false
+    /// 背面レンズの焦点距離(mm)。タップで 28 → 52 → 120 を巡回。
+    @AppStorage("focalMm") private var focalMm = 28
+    private var focal: CameraManager.Focal { CameraManager.Focal(rawValue: focalMm) ?? .f28 }
+
+    /// Before/After 比較。プレビュー長押し中だけフィルタを外して素の映像を見せる。
+    /// GestureState なので指を離すと自動で false に戻る。
+    @GestureState private var isComparing = false
+
+    /// 猫ログ(アプリ内ギャラリー)表示フラグ
+    @State private var showNekoLog = false
+    /// 猫を振り向かせる呼び音
+    @StateObject private var catCaller = CatCaller()
+    /// 呼び音の種類(表示設定と同一キー)
+    @AppStorage("catSound") private var catSoundRaw = CatCaller.Sound.squeak.rawValue
+    private var catSound: CatCaller.Sound { CatCaller.Sound(rawValue: catSoundRaw) ?? .squeak }
 
     var body: some View {
         ZStack {
@@ -97,15 +140,9 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 preview
                     .frame(maxWidth: .infinity)
-                    .aspectRatio(polaroid ? 1.12 / 1.30 : (aspect45 ? 4.0 / 5.0 : 9.0 / 16.0), contentMode: .fit)
+                    .aspectRatio(cropAspect.previewRatio, contentMode: .fit)
                     .clipped()
-                    .animation(.easeInOut(duration: 0.2), value: polaroid)
-                    .animation(.easeInOut(duration: 0.2), value: aspect45)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard tapToShoot, camera.status == .running, !isSaving else { return }
-                        capture()
-                    }
+                    .animation(.easeInOut(duration: 0.2), value: cropAspect.previewRatio)
                     .overlay(alignment: .topTrailing) {
                         // ヘルプボタン(右上、コントロールと干渉しない位置)
                         Button { Haptics.tick(); showHelp = true } label: {
@@ -117,50 +154,36 @@ struct ContentView: View {
                         .padding(16)
                     }
                     .overlay(alignment: .topLeading) {
-                        // 100日マップ(左上)
-                        Button { Haptics.tick(); showHundredMap = true } label: {
-                            VStack(spacing: 2) {
-                                Image(systemName: "globe.asia.australia.fill")
-                                    .font(.system(size: 22, weight: .semibold))
-                                Text("100日").font(.system(size: 9, weight: .heavy))
-                            }
-                            .foregroundStyle(.white.opacity(0.85))
-                            .padding(8)
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                            .shadow(color: .black.opacity(0.4), radius: 3)
+                        // 猫ログ(アプリ内ギャラリー)入口
+                        Button { Haptics.tick(); showNekoLog = true } label: {
+                            Image(systemName: "pawprint.fill")
+                                .font(.system(size: 24))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .shadow(color: .black.opacity(0.4), radius: 3)
                         }
-                        .padding(12)
+                        .padding(16)
                     }
                     .overlay(alignment: .bottom) {
-                        // 撮影直後の投稿バナー
-                        if pendingPost != nil {
-                            postBanner.padding(.bottom, 10)
+                        // Before/After 比較中の表示
+                        if isComparing {
+                            Text("ORIGINAL")
+                                .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                                .tracking(2)
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 12).padding(.vertical, 5)
+                                .background(Color.white.opacity(0.85), in: Capsule())
+                                .padding(.bottom, 14)
                         }
                     }
-                    .overlay(alignment: .top) {
-                        // 猫の頭数バッジ(プレビュー上端中央。ヘルプ/左上 liveOverlay と干渉しない位置)
-                        catBadge
-                            .padding(.top, 12)
-                    }
-                    .overlay(alignment: .bottomLeading) {
-                        // 呼び鈴ボタン(プレビュー左下。ヘルプ/地図/頭数バッジと干渉しない位置)
-                        catCallButton
-                            .padding(16)
-                    }
-                    .overlay(alignment: .center) {
-                        // オートシャッター発火時の一瞬のヒント
-                        if showAutoHint {
-                            Text("📸 猫を発見!")
-                                .font(.system(size: 20, weight: .heavy, design: .rounded))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 10)
-                                .background(Color.black.opacity(0.5))
-                                .clipShape(Capsule())
-                                .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                        }
-                    }
+                    // 長押しでフィルタOFF(Before)、離すとON(After)。
+                    // simultaneousGesture なのでピンチ(地図ズーム)やタップと共存する。
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.3)
+                            .sequenced(before: DragGesture(minimumDistance: 0))
+                            .updating($isComparing) { value, state, _ in
+                                if case .second = value { state = true }
+                            }
+                    )
 
                 Spacer(minLength: 0)
                 controls
@@ -168,10 +191,10 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            camera.select(focal: focal)   // start 前に呼ぶ(同一シリアルキューで順に適用される)
             camera.start()
-            // カメラの各フレームを猫検出に渡す(プレビュー/フィルタ経路は変更しない)
-            camera.onPixelBuffer = { catDetector.process($0) }
             locationManager.start()
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             // 国境データを先読み
             Task.detached { CountryShapes.shared.loadIfNeeded() }
             // 初回起動時にヘルプを自動表示
@@ -180,7 +203,17 @@ struct ContentView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showHelp = true }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            let o = UIDevice.current.orientation
+            // faceUp/faceDown/unknown は無視して直前の有効な向きを保持
+            if o == .portrait || o == .portraitUpsideDown || o == .landscapeLeft || o == .landscapeRight {
+                withAnimation(.easeInOut(duration: 0.25)) { deviceOrientation = o }
+            }
+        }
         .sheet(isPresented: $showHelp) { HelpView() }
+        .fullScreenCover(isPresented: $showNekoLog) {
+            NekoLogView { showNekoLog = false }
+        }
         .sheet(isPresented: $showPOISettings) { POISettingsView() }
         .fullScreenCover(isPresented: $showPreview) {
             if let lastThumbnail {
@@ -196,107 +229,31 @@ struct ContentView: View {
             }
             .ignoresSafeArea()
         }
-        .fullScreenCover(isPresented: $showHundredMap) {
-            HundredMapView(myLocation: locationManager.location) { showHundredMap = false }
-        }
-        .sheet(isPresented: $showComposer) {
-            if let p = pendingPost {
-                PostComposerView(imageData: p.data, thumbnail: p.thumbnail,
-                                 location: p.location, placeName: p.placeName,
-                                 initialComment: p.comment,
-                                 onClose: { showComposer = false },
-                                 onPosted: {
-                                     showComposer = false
-                                     pendingPost = nil
-                                     showHundredMap = true
-                                 })
-            }
-        }
-    }
-
-    /// 撮影直後に出す「100日マップに残す」バナー。
-    private var postBanner: some View {
-        HStack(spacing: 10) {
-            if let thumb = pendingPost?.thumbnail {
-                Image(uiImage: thumb).resizable().scaledToFill()
-                    .frame(width: 36, height: 36)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            Button {
-                Haptics.tick()
-                showComposer = true
-            } label: {
-                Label("100日マップに残す", systemImage: "mappin.and.ellipse")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(Color.orange, in: Capsule())
-            }
-            Button {
-                withAnimation { pendingPost = nil }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 20)).foregroundStyle(.white.opacity(0.7))
-            }
-        }
-        .padding(8)
-        .background(.ultraThinMaterial, in: Capsule())
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     // MARK: - Preview
 
-    /// プレビュー本体。ポラロイドモードでは保存写真(composePolaroid)と同じ
-    /// 白フチ + 下帯キャプションのレイアウトを再現する。
-    /// フラッシュ overlay と位置変化による地図再生成は両モード共通。
     @ViewBuilder
     private var preview: some View {
-        Group {
-            if polaroid {
-                polaroidPreview
-            } else {
-                normalPreview
+        normalPreview
+            .overlay(
+                Color.white
+                    .opacity(flashOpacity)
+                    .allowsHitTesting(false)
+            )
+            .onChange(of: locationManager.location) { _ in
+                updateMapImageIfNeeded()
+                updateNearbyPlaces()
             }
-        }
-        .overlay(
-            Color.white
-                .opacity(flashOpacity)
-                .allowsHitTesting(false)
-        )
-        .onChange(of: locationManager.location) { _ in
-            updateMapImageIfNeeded()
-            updateNearbyPlaces()
-        }
-        .onChange(of: mapEnabled) { _ in
-            updateMapImageIfNeeded()
-        }
-        .onChange(of: poiGenreRaw) { _ in
-            updateNearbyPlaces()
-        }
-        .onChange(of: poiCount) { _ in
-            updateNearbyPlaces()
-        }
-        // オートシャッター: 猫が「こちらを向いた」立ち上がりで自動撮影
-        .onChange(of: catDetector.isCatFacing) { facing in
-            handleFacingChange(facing)
-        }
-    }
-
-    /// isCatFacing の立ち上がり(false→true)を受けてオート撮影する。
-    /// armed(autoShutter=ON)・保存中でない・前回オート撮影から 3 秒以上、を満たすときだけ発火。
-    private func handleFacingChange(_ facing: Bool) {
-        guard autoShutter, facing, !isSaving else { return }
-        let now = Date()
-        if let last = lastAutoCaptureDate, now.timeIntervalSince(last) < 3 {
-            return  // クールダウン中
-        }
-        lastAutoCaptureDate = now
-        // 「猫を発見!」を一瞬表示してから手動と同じ capture() を呼ぶ
-        withAnimation(.easeOut(duration: 0.15)) { showAutoHint = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            withAnimation(.easeIn(duration: 0.25)) { showAutoHint = false }
-        }
-        capture()
+            .onChange(of: mapEnabled) { _ in
+                updateMapImageIfNeeded()
+            }
+            .onChange(of: poiGenreRaw) { _ in
+                updateNearbyPlaces()
+            }
+            .onChange(of: poiCount) { _ in
+                updateNearbyPlaces()
+            }
     }
 
     /// 現在地・ジャンル・件数で周辺スポットを更新する(マネージャ側で重複取得を判定)。
@@ -305,146 +262,65 @@ struct ContentView: View {
         nearbyManager.update(for: location, genre: poiGenre, count: poiCount)
     }
 
-    /// 通常モード: フルフレームの映像 + 焼き込み内容(liveOverlay + 地図)のライブ表示
+    /// 通常モード: 被写体(カメラ)はそのまま、左上の文字情報だけ端末の向きに回転。
     private var normalPreview: some View {
         ZStack(alignment: .topLeading) {
-            cameraLayer(squareCrop: false)
+            cameraLayer()
 
-            // 焼き込み内容(テキスト + その下に地図)のライブ表示。左右切替対応。
             GeometryReader { geo in
-                VStack(alignment: infoOnRight ? .trailing : .leading, spacing: 10) {
-                    liveOverlay
-                    if mapEnabled, let mapImage {
-                        Image(uiImage: mapImage)
-                            .resizable()
-                            .frame(width: geo.size.width * 0.36,
-                                   height: geo.size.width * 0.36)
-                            // 地図領域だけピンチを受ける
-                            .contentShape(Rectangle())
-                            .gesture(mapZoomGesture)
-                    }
-                }
-                .padding(16)
-                .frame(width: geo.size.width, height: geo.size.height,
-                       alignment: infoOnRight ? .topTrailing : .topLeading)
+                // 情報の起点コーナー(左:top-left / 右:top-right)を向きに対応する隅へ置き、その隅軸で回転。
+                // 出力(回転後画像の左上/右上)と同じ位置・向きになる。被写体は無回転。
+                infoLiveBlock(width: geo.size.width)
+                    .frame(width: geo.size.width, height: geo.size.height,
+                           alignment: infoOnRight ? .topTrailing : .topLeading)
+                    .rotationEffect(infoAngle, anchor: infoOnRight ? .topTrailing : .topLeading)
+                    .offset(infoOffset(geo.size))
+                    .animation(.easeInOut(duration: 0.25), value: captureQuarterTurns)
+                    .animation(.easeInOut(duration: 0.25), value: infoOnRight)
             }
         }
+        // 地図表示中は写真全体のピンチで地図をズーム
+        .contentShape(Rectangle())
+        .gesture(mapZoomGesture)
+        // プレビュータップでキーボードを閉じる
+        .onTapGesture { commentFocused = false }
     }
 
-    /// ポラロイドモード: composePolaroid と同じ寸法でライブプレビューを構成する。
-    /// 全体幅 W に対し photoSide = W / 1.12、margin = photoSide * 0.06。
-    /// キャンバス比率 = (side*1.12) : (side*1.30) を aspectRatio(1.12/1.30) で枠に収める。
-    private var polaroidPreview: some View {
-        GeometryReader { geo in
-            let totalWidth = geo.size.width
-            let photoSide = totalWidth / 1.12
-            let margin = photoSide * 0.06
-            let mapSide = photoSide * 0.34
-            let mapPad = photoSide * 0.05
-
-            VStack(alignment: .leading, spacing: 0) {
-                // 上部: 上・左・右 margin の白フチ内に正方形カメラ映像。
-                // 映像左上(または右上)に地図を重ね、ピンチズームを維持する。
-                ZStack(alignment: infoOnRight ? .topTrailing : .topLeading) {
-                    cameraLayer(squareCrop: true)
-                        .frame(width: photoSide, height: photoSide)
-                        .clipped()
-
-                    // 地図 + その下に近くのスポット(composePolaroid と同じ配置)
-                    VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.012) {
-                        if mapEnabled, let mapImage {
-                            Image(uiImage: mapImage)
-                                .resizable()
-                                .frame(width: mapSide, height: mapSide)
-                                .contentShape(Rectangle())
-                                .gesture(mapZoomGesture)
-                        }
-                        polaroidPlaces(photoSide: photoSide)
-                    }
-                    .offset(x: infoOnRight ? -mapPad : mapPad, y: mapPad)
-                }
-                .padding(.top, margin)
-                .padding(.horizontal, margin)
-
-                // 下帯キャプション
-                polaroidCaption(photoSide: photoSide)
-                    .frame(maxWidth: .infinity, alignment: infoOnRight ? .trailing : .leading)
-                    .padding(infoOnRight ? .trailing : .leading, margin + photoSide * 0.008)
-                    .padding(.top, photoSide * 0.03)
-
-                Spacer(minLength: 0)
+    /// 左上の焼き込み情報のライブ表示(テキスト + 地図 + コメント)。
+    /// width = プレビューの短辺。焼き込みと同じ u=width/1000 の比例サイズで組む。
+    private func infoLiveBlock(width: CGFloat) -> some View {
+        let u = width / 1000.0
+        let cSize = commentFontSize(u: u)
+        return VStack(alignment: infoOnRight ? .trailing : .leading, spacing: 8 * u) {
+            liveOverlay(u: u)
+            if mapEnabled, let mapImage {
+                Image(uiImage: mapImage)
+                    .resizable()
+                    .frame(width: width * 0.36, height: width * 0.36)
+                    .padding(.top, 4 * u)
             }
-            .frame(width: totalWidth, height: geo.size.height, alignment: .topLeading)
-            .background(Color(white: 0.97))
-        }
-    }
-
-    /// composePolaroid の下帯テキスト 3 行(地名コード / 📍地名 / 日時 + 座標)。
-    /// フォントサイズは photoSide 基準で composePolaroid (64/36/27 * side/1000) と一致。
-    @ViewBuilder
-    private func polaroidCaption(photoSide: CGFloat) -> some View {
-        let ink = Color(white: 0.22)
-        let hasComment = !commentText.isEmpty
-        // コメント有無で composePolaroid に合わせてフォントサイズを切り替える
-        let codeRatio: CGFloat = hasComment ? 0.056 : 0.064
-        let placeRatio: CGFloat = hasComment ? 0.030 : 0.036
-        let subtitleRatio: CGFloat = hasComment ? 0.024 : 0.027
-        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.01) {
-            if showPlaceName, let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
-                Text(code)
-                    .font(.system(size: photoSide * codeRatio, weight: .heavy))
-                    .foregroundStyle(ink)
-            }
-            if hasComment {
+            // コメント(地図の下)。設定で選んだ雑誌風書体。
+            if !commentText.isEmpty {
                 Text(commentText)
-                    .font(.system(size: photoSide * 0.032, weight: .bold))
-                    .foregroundStyle(ink)
-            }
-            if showPlaceName, !locationManager.placeName.isEmpty {
-                Text("📍 \(locationManager.placeName)")
-                    .font(.system(size: photoSide * placeRatio, weight: .bold))
-                    .foregroundStyle(ink)
-            }
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                let subtitle = captionSubtitle(date: context.date)
-                if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: photoSide * subtitleRatio, weight: .regular, design: .monospaced))
-                        .foregroundStyle(ink.opacity(0.65))
-                }
+                    .font(.system(size: cSize,
+                                  weight: commentFontStyle.swiftWeight,
+                                  design: commentFontStyle.design))
+                    .tracking(cSize * commentFontStyle.trackingRatio)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(infoOnRight ? .trailing : .leading)
+                    .shadow(color: .black.opacity(0.55), radius: 6 * u, y: 2 * u)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(10)
+                    .padding(.top, 6 * u)
             }
         }
+        .padding(infoOnRight ? .trailing : .leading, 44 * u)
+        .padding(.top, 44 * u)
     }
 
-    /// 写真上(地図の下)の近くのスポット表示(composePolaroid の配置に対応)。
+    /// カメラ映像 or 権限メッセージ。
     @ViewBuilder
-    private func polaroidPlaces(photoSide: CGFloat) -> some View {
-        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: photoSide * 0.006) {
-            ForEach(nearbyManager.places.prefix(6).map(\.display), id: \.self) { place in
-                Text("・" + place)
-                    .font(.system(size: photoSide * 0.026, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .shadow(color: .black.opacity(0.55), radius: 3, y: 1)
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    /// 下帯3行目: 日時 +(座標があれば)"   " + 座標。composePolaroid と同一の組み立て。
-    private func captionSubtitle(date: Date) -> String {
-        var parts: [String] = []
-        if showDateTime {
-            parts.append(PhotoRenderer.displayDateFormatter.string(from: date))
-        }
-        if showCoordinates, let coordinate = locationManager.location?.coordinate {
-            parts.append(coordinate.displayString)
-        }
-        return parts.joined(separator: "   ")
-    }
-
-    /// カメラ映像 or 権限メッセージ。両モード共通。
-    @ViewBuilder
-    private func cameraLayer(squareCrop: Bool) -> some View {
+    private func cameraLayer() -> some View {
         switch camera.status {
         case .denied:
             permissionMessage("カメラへのアクセスが許可されていません。\n設定アプリから許可してください。")
@@ -452,8 +328,10 @@ struct ContentView: View {
             permissionMessage("カメラを起動できませんでした。")
         default:
             MetalPreviewView(camera: camera,
-                             intensity: intensity,
-                             squareCrop: squareCrop)
+                             intensity: isComparing ? 0 : intensity,
+                             coolness: isComparing ? 0 : coolness,
+                             sim: filmSim,
+                             squareCrop: false)
         }
     }
 
@@ -461,6 +339,7 @@ struct ContentView: View {
     private var mapZoomGesture: some Gesture {
         MagnificationGesture()
             .onChanged { value in
+                guard mapEnabled else { return }   // 地図表示中のみ有効
                 let base = gestureBaseZoom ?? mapZoom
                 if gestureBaseZoom == nil { gestureBaseZoom = base }
                 mapZoom = min(max(base * value, 1), 8)
@@ -471,83 +350,38 @@ struct ContentView: View {
             }
     }
 
-    /// 撮影結果に焼き込まれる内容のライブ表示
-    private var liveOverlay: some View {
-        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: 4) {
+    /// 撮影結果に焼き込まれる内容のライブ表示。焼き込み(PhotoRenderer)と同じ
+    /// 短辺基準の比例サイズ(u = 短辺/1000)で組み、出力と一致させる。
+    private func liveOverlay(u: CGFloat) -> some View {
+        VStack(alignment: infoOnRight ? .trailing : .leading, spacing: 8 * u) {
             if showPlaceName, let code = PhotoRenderer.placeCode(from: locationManager.placeName) {
                 Text(code)
-                    .font(.system(size: 34, weight: .heavy))
-            }
-            if !commentText.isEmpty {
-                Text(commentText)
-                    .font(.system(size: 20, weight: .heavy))
+                    .font(.system(size: 84 * u, weight: .heavy))
             }
             if showPlaceName, !locationManager.placeName.isEmpty {
                 Text("📍 \(locationManager.placeName)")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 36 * u, weight: .bold))
             }
             if showCoordinates, let coordinate = locationManager.location?.coordinate {
                 Text(coordinate.displayString)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 30 * u, weight: .semibold, design: .monospaced))
             }
             if showDateTime {
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     Text(PhotoRenderer.displayDateFormatter.string(from: context.date))
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 30 * u, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.92))
                 }
             }
             // 近くのスポット(日時の下)
             ForEach(nearbyManager.places.map(\.display), id: \.self) { place in
                 Text("・\(place)")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 26 * u, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
             }
         }
         .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
-    }
-
-    /// 猫の頭数バッジ。検出時のみ表示。レトロ調(白文字+影、半透明の暗い角丸背景)。
-    @ViewBuilder
-    private var catBadge: some View {
-        if catDetector.catCount > 0 {
-            Text("🐾 \(catDetector.catCount)")
-                .font(.system(size: 16, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.black.opacity(0.45))
-                .clipShape(Capsule())
-                .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                .animation(.easeInOut(duration: 0.2), value: catDetector.catCount)
-        }
-    }
-
-    /// 呼び鈴ボタン。タップで選択中サウンドを再生、長押しメニューで3種から切替。
-    /// レトロ調(半透明の暗い角丸 + 白アイコン+影)。アイコンは選択中サウンドの symbol。
-    private var catCallButton: some View {
-        Menu {
-            // メニューから鳴らすサウンドを選択(永続化)
-            Picker("呼び鈴の音", selection: $catSoundRaw) {
-                ForEach(CatCaller.Sound.allCases) { sound in
-                    Label(sound.label, systemImage: sound.symbol)
-                        .tag(sound.rawValue)
-                }
-            }
-        } label: {
-            Image(systemName: catSound.symbol)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-                .frame(width: 48, height: 48)
-                .background(Color.black.opacity(0.45))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-        } primaryAction: {
-            // タップ(プライマリアクション)で選択中サウンドを再生
-            Haptics.tick()
-            catCaller.play(catSound)
-        }
+        .shadow(color: .black.opacity(0.55), radius: 6 * u, y: 2 * u)
     }
 
     private func permissionMessage(_ text: String) -> some View {
@@ -566,21 +400,11 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(spacing: 20) {
+            filmDial
+
             lensRow
 
             commentField
-
-            HStack(spacing: 12) {
-                Image(systemName: "circle.lefthalf.filled")
-                    .foregroundStyle(.white.opacity(0.7))
-                Slider(value: $intensity, in: 0...1)
-                    .tint(.white)
-                Text(String(format: "%.0f%%", intensity * 100))
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 46, alignment: .trailing)
-            }
-            .padding(.horizontal, 28)
 
             HStack {
                 // 左側: サムネイル + ギャラリー取り込みボタン
@@ -596,20 +420,21 @@ struct ContentView: View {
 
                 Spacer()
 
+                // アスペクト比切替ボタン(ポラロイドボタン位置)
                 Button {
                     Haptics.tick()
-                    // 循環: ポラロイド → 9:16 → 4:5 → ポラロイド
-                    if polaroid { polaroid = false; aspect45 = false }
-                    else if !aspect45 { aspect45 = true }
-                    else { polaroid = true }
+                    let all = CropAspect.allCases
+                    let idx = all.firstIndex(of: cropAspect) ?? 0
+                    let next = all[(idx + 1) % all.count]
+                    cropAspectRaw = next.rawValue
                 } label: {
                     VStack(spacing: 4) {
-                        Image(systemName: polaroid ? "square.fill" : "rectangle.portrait")
-                            .font(.system(size: 26))
-                        Text(polaroid ? "Polaroid" : (aspect45 ? "4:5" : "9:16"))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        Image(systemName: "aspectratio")
+                            .font(.system(size: 22))
+                        Text(cropAspect.label)
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
                     }
-                    .foregroundStyle(polaroid ? .yellow : .white)
+                    .foregroundStyle(.white)
                     .frame(width: 56, height: 56)
                 }
             }
@@ -619,12 +444,21 @@ struct ContentView: View {
 
     /// 写真に焼き込むコメント入力欄(ダーク調、入力時のみクリアボタン表示)
     private var commentField: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             TextField("", text: $commentText, prompt:
-                Text("コメント(写真に焼き込み)")
-                    .foregroundColor(.white.opacity(0.4)))
+                Text("コメント(改行で最大10行・写真に焼き込み)")
+                    .foregroundColor(.white.opacity(0.4)),
+                      axis: .vertical)
                 .foregroundStyle(.white)
-                .submitLabel(.done)
+                .lineLimit(1...10)
+                .focused($commentFocused)
+                .onChange(of: commentText) { _ in capCommentLines() }
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("完了") { Haptics.tick(); commentFocused = false }
+                    }
+                }
 
             if !commentText.isEmpty {
                 Button {
@@ -643,7 +477,63 @@ struct ContentView: View {
         .padding(.horizontal, 28)
     }
 
-    /// レンズ切替 + 地図・オートシャッタートグルの水平選択行
+    /// コメントを最大 10 行に制限する。
+    private func capCommentLines() {
+        var lines = commentText.components(separatedBy: "\n")
+        guard lines.count > 10 else { return }
+        lines = Array(lines.prefix(10))
+        commentText = lines.joined(separator: "\n")
+    }
+
+    /// コメント文字サイズ。焼き込みと同じ (44 - t*22)*u(行数で縮小)。
+    private func commentFontSize(u: CGFloat) -> CGFloat {
+        let n = max(1, min(10, commentText.components(separatedBy: "\n").count))
+        let t = CGFloat(n - 1) / 9.0
+        return (44 - t * 22) * u
+    }
+
+    /// レンズ行: 地図トグル / 固定スペック表示 + フロント切替ボタン / 設定ボタン
+    /// フィルムシミュレーションの横スクロールダイヤル。
+    /// 選択中は琥珀色で塗り、タップで即プレビューに反映される。
+    private var filmDial: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(FilmSimulation.allCases) { sim in
+                        let selected = sim == filmSim
+                        Button {
+                            Haptics.tick()
+                            filmSimRaw = sim.rawValue
+                        } label: {
+                            Text(sim.name)
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundStyle(selected ? .black : .white.opacity(0.85))
+                                .padding(.horizontal, 12)
+                                .frame(height: 30)
+                                // 選択色: フィルム系=琥珀 / METAL系=シルバー
+                                .background(selected ? (sim.isMetal ? Color(red: 0.80, green: 0.83, blue: 0.87)
+                                                                    : Color(red: 0.95, green: 0.75, blue: 0.28))
+                                                     : Color.white.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
+                        .id(sim)
+                    }
+                }
+                .padding(.horizontal, 24)
+            }
+            .onAppear {
+                // 起動時に選択中のフィルムを画面内へ
+                proxy.scrollTo(filmSim, anchor: .center)
+            }
+            .onChange(of: filmSimRaw) { _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(filmSim, anchor: .center)
+                }
+            }
+        }
+        .frame(height: 30)
+    }
+
     private var lensRow: some View {
         HStack(spacing: 10) {
             // 地図オン/オフトグル(行の左端)
@@ -659,30 +549,57 @@ struct ContentView: View {
                     .clipShape(Capsule())
             }
 
-            // オートシャッターのオン/オフトグル(地図トグルの右隣)。
-            // ON のとき色で強調し、armed であることを一目で分かるようにする。
+            Spacer(minLength: 0)
+
+            // 猫を振り向かせる呼び音(種類は表示設定で選択)
             Button {
                 Haptics.tick()
-                autoShutter.toggle()
+                catCaller.play(catSound)
             } label: {
-                Image(systemName: autoShutter ? "camera.aperture" : "camera")
+                Image(systemName: catSound.symbol)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(autoShutter ? .yellow : .white)
+                    .foregroundStyle(.white)
                     .frame(width: 40, height: 32)
-                    .background(Color.white.opacity(autoShutter ? 0.0 : 0.18))
+                    .background(Color.white.opacity(0.18))
+                    .clipShape(Capsule())
+            }
+
+            // 焦点距離の切替(28 → 52 → 120 を巡回)
+            Button {
+                Haptics.tick()
+                let all = CameraManager.Focal.allCases
+                let idx = all.firstIndex(of: focal) ?? 0
+                let next = all[(idx + 1) % all.count]
+                focalMm = next.rawValue
+                camera.select(focal: next)
+            } label: {
+                Text(focal.label)
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(camera.currentLens == .front ? .white.opacity(0.4) : .white.opacity(0.9))
+                    .padding(.horizontal, 14)
+                    .frame(height: 32)
+                    .background(Color.white.opacity(0.14))
+                    .clipShape(Capsule())
+            }
+            .disabled(camera.currentLens == .front)
+
+            // フロント/バック切替ボタン
+            Button {
+                Haptics.tick()
+                let next: CameraManager.Lens = camera.currentLens == .front ? .back : .front
+                camera.select(next)
+            } label: {
+                Image(systemName: "arrow.triangle.2.circlepath.camera")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(camera.currentLens == .front ? .yellow : .white.opacity(0.9))
+                    .frame(width: 44, height: 32)
+                    .background(camera.currentLens == .front ? Color.white.opacity(0.18) : Color.clear)
                     .clipShape(Capsule())
             }
 
             Spacer(minLength: 0)
 
-            lensButton(.back1x, label: "1x")
-            lensButton(.back3x, label: "3x")
-            lensButton(.back5x, label: "5x")
-            lensButton(.front, systemImage: "arrow.triangle.2.circlepath.camera")
-
-            Spacer(minLength: 0)
-
-            // 表示設定(行の右端)
+            // 表示設定(行の右端、地図トグルと同様のカプセル)
             Button {
                 Haptics.tick()
                 showPOISettings = true
@@ -696,32 +613,6 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 28)
-    }
-
-    /// 小さいカプセル状のレンズ選択ボタン。選択中は白背景・黒文字。
-    @ViewBuilder
-    private func lensButton(_ lens: CameraManager.Lens,
-                            label: String? = nil,
-                            systemImage: String? = nil) -> some View {
-        let selected = camera.currentLens == lens
-        Button {
-            Haptics.tick()
-            camera.select(lens)
-        } label: {
-            Group {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 15, weight: .semibold))
-                } else if let label {
-                    Text(label)
-                        .font(.system(size: 14, weight: .semibold))
-                }
-            }
-            .foregroundStyle(selected ? .black : .white.opacity(0.9))
-            .frame(width: 44, height: 32)
-            .background(selected ? Color.white : Color.white.opacity(0.18))
-            .clipShape(Capsule())
-        }
     }
 
     private var shutterButton: some View {
@@ -811,22 +702,27 @@ struct ContentView: View {
             withAnimation(.easeOut(duration: 0.25)) { flashOpacity = 0 }
         }
 
-        let options = CaptureOptions(polaroid: polaroid,
-                                     aspectW: aspect45 ? 4 : 9,
-                                     aspectH: aspect45 ? 5 : 16,
-                                     intensity: intensity,
-                                     location: locationManager.location,
-                                     placeName: locationManager.placeName,
-                                     date: Date(),
-                                     mapZoom: mapZoom,
-                                     mapEnabled: mapEnabled,
-                                     comment: commentText,
-                                     nearbyPlaces: nearbyManager.places.map(\.display),
-                                     catCount: catDetector.catCount,
-                                     showPlaceName: showPlaceName,
-                                     showCoordinates: showCoordinates,
-                                     showDateTime: showDateTime,
-                                     infoOnRight: infoOnRight)
+        let aspect = cropAspect
+        let options = CaptureOptions(
+            aspectW: aspect.w,
+            aspectH: aspect.h,
+            intensity: intensity,
+            coolness: coolness,
+            sim: filmSim,
+            commentFont: commentFontStyle,
+            quarterTurns: captureQuarterTurns,
+            infoOnRight: infoOnRight,
+            location: locationManager.location,
+            placeName: locationManager.placeName,
+            date: Date(),
+            mapZoom: mapZoom,
+            mapEnabled: mapEnabled,
+            comment: commentText,
+            nearbyPlaces: nearbyManager.places.map(\.display),
+            showPlaceName: showPlaceName,
+            showCoordinates: showCoordinates,
+            showDateTime: showDateTime,
+            isFront: camera.currentLens == .front)
 
         camera.capturePhoto { photo in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -835,22 +731,12 @@ struct ContentView: View {
                     return
                 }
                 let thumbnail = UIImage(data: data)
-                PhotoSaver.save(data, location: options.location) { _ in
+                PhotoSaver.save(data, location: options.location) { saved in
+                    if saved {
+                        NekoLogStore.shared.add(data: data, date: options.date, place: options.placeName)
+                    }
                     lastThumbnail = thumbnail
                     isSaving = false
-                    // 位置があれば100日マップへの投稿を提案(30秒で自動で引っ込む)
-                    if let loc = options.location, let thumb = thumbnail {
-                        withAnimation {
-                            pendingPost = PendingPost(data: data, thumbnail: thumb, location: loc,
-                                                      placeName: options.placeName, comment: options.comment)
-                        }
-                        let current = pendingPost?.id
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-                            if pendingPost?.id == current, !showComposer {
-                                withAnimation { pendingPost = nil }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -878,9 +764,11 @@ struct ContentView: View {
         isSaving = true
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
-        let currentPolaroid = polaroid
-        let currentAspect45 = aspect45
+        let aspect = cropAspect
         let currentIntensity = intensity
+        let currentCoolness = coolness
+        let currentSim = filmSim
+        let currentCommentFont = commentFontStyle
         let currentMapZoom = mapZoom
         let currentMapEnabled = mapEnabled
         let currentComment = commentText
@@ -896,10 +784,12 @@ struct ContentView: View {
                 image: image,
                 location: location,
                 date: date,
-                polaroid: currentPolaroid,
-                aspectW: currentAspect45 ? 4 : 9,
-                aspectH: currentAspect45 ? 5 : 16,
+                aspectW: aspect.w,
+                aspectH: aspect.h,
                 intensity: currentIntensity,
+                coolness: currentCoolness,
+                sim: currentSim,
+                commentFont: currentCommentFont,
                 mapZoom: currentMapZoom,
                 mapEnabled: currentMapEnabled,
                 comment: currentComment,
@@ -922,15 +812,4 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-}
-
-
-/// 撮影直後の100日マップ投稿候補。
-struct PendingPost: Identifiable {
-    let id = UUID()
-    let data: Data
-    let thumbnail: UIImage
-    let location: CLLocation
-    let placeName: String
-    let comment: String
 }

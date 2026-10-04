@@ -48,6 +48,7 @@ struct ResultPreviewView: View {
             }
             .onEnded { value in
                 guard zoom <= 1.01 else { return }
+                // 移動量 or 勢い(予測終点)が閾値を超えたら閉じる
                 let dist = abs(value.translation.height)
                 let predicted = abs(value.predictedEndTranslation.height)
                 if dist > 120 || predicted > 320 {
