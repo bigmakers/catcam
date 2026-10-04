@@ -1,7 +1,7 @@
 #!/usr/bin/env swift
 // CATcam app icon renderer.
 // Generates a 1024x1024 fully-opaque PNG using AppKit / CoreGraphics.
-// Concept: retro/film-tinted camera LENS + a CAT (ears silhouette + paw mark)
+// Concept: retro/film-tinted camera LENS + a CAT (ear silhouette + location mark)
 // over a faint map of the Japan area.
 // Usage: swift tools/render_app_icon.swift  (run from repo root)
 
@@ -52,12 +52,12 @@ func circle(_ center: CGPoint, _ radius: CGFloat) -> CGRect {
 }
 
 // MARK: - 1. Background gradient (warm retro / faded film)
-// top cream #F2E4C8 -> mid amber #C98A4E -> bottom warm brown #6B4A2B
+// A low-contrast parchment-to-caramel field keeps attention on the silhouette.
 
 do {
     let grad = CGGradient(
         colorsSpace: colorSpace,
-        colors: [color(0xF2E4C8), color(0xD9A364), color(0x8A5C34), color(0x5E3F25)] as CFArray,
+        colors: [color(0xF5E7CE), color(0xDFC29A), color(0xBE936C), color(0x997356)] as CFArray,
         locations: [0.0, 0.42, 0.78, 1.0]
     )!
     // top of image in CG coords is y = size
@@ -72,7 +72,7 @@ do {
     ctx.saveGState()
     let vg = CGGradient(
         colorsSpace: colorSpace,
-        colors: [color(0x000000, alpha: 0.0), color(0x3A2412, alpha: 0.0), color(0x2A1A0C, alpha: 0.38)] as CFArray,
+        colors: [color(0x000000, alpha: 0.0), color(0x3A2412, alpha: 0.0), color(0x2A1A0C, alpha: 0.14)] as CFArray,
         locations: [0.0, 0.65, 1.0]
     )!
     ctx.drawRadialGradient(
@@ -152,8 +152,8 @@ do {
 
     let countries = loadCountries()
     // Faint warm cream lines that melt into the background.
-    ctx.setStrokeColor(color(0xFBF1DC, alpha: 0.22))
-    ctx.setLineWidth(4)
+    ctx.setStrokeColor(color(0xFBF1DC, alpha: 0.16))
+    ctx.setLineWidth(2.5)
     ctx.setLineJoin(.round)
     ctx.setLineCap(.round)
 
@@ -182,150 +182,153 @@ do {
     }
 }
 
-// MARK: - 3. Cat ears (silhouette) BEHIND/ABOVE the lens
-// Drawn before the lens so the lens rests in front of the ear bases,
-// reading as a round cat "head" with two pointed ears poking up.
+// MARK: - 3. Sculpted ears and optical barrel
+// One large silhouette, with generous margins for the system icon mask.
+let lc = toCG(CGPoint(x: 512, y: 558))
 
-let lensCenter = CGPoint(x: 512, y: 540)
-let lc = toCG(lensCenter)
-let lensOuterR: CGFloat = 268
-
-// Warm dark fur color for the cat silhouette.
-let furColor = color(0x3A2414)
-
-do {
-    // Ear is a triangle with slightly rounded tip, plus an inner pink-ish accent.
-    // Pointed triangular ear with a softly rounded tip.
-    func earPath(apex: CGPoint, baseL: CGPoint, baseR: CGPoint, shrink: CGFloat) -> CGPath {
-        // Optionally shrink toward the centroid to build the inner ear.
-        let cxp = (apex.x + baseL.x + baseR.x) / 3.0
-        let cyp = (apex.y + baseL.y + baseR.y) / 3.0
-        func sh(_ p: CGPoint) -> CGPoint {
-            CGPoint(x: cxp + (p.x - cxp) * shrink, y: cyp + (p.y - cyp) * shrink)
-        }
-        let a = sh(apex), bl = sh(baseL), br = sh(baseR)
-        // Round the tip: approach the apex from each side and curve across it.
-        let tL = CGPoint(x: bl.x * 0.18 + a.x * 0.82, y: bl.y * 0.18 + a.y * 0.82)
-        let tR = CGPoint(x: br.x * 0.18 + a.x * 0.82, y: br.y * 0.18 + a.y * 0.82)
-        let path = CGMutablePath()
-        path.move(to: toCG(bl))
-        path.addLine(to: toCG(tL))
-        path.addQuadCurve(to: toCG(tR), control: toCG(a))
-        path.addLine(to: toCG(br))
-        path.closeSubpath()
-        return path
-    }
-
-    func drawEar(apex: CGPoint, baseL: CGPoint, baseR: CGPoint, innerColor: CGColor) {
-        ctx.addPath(earPath(apex: apex, baseL: baseL, baseR: baseR, shrink: 1.0))
-        ctx.setFillColor(furColor)
-        ctx.fillPath()
-        ctx.addPath(earPath(apex: apex, baseL: baseL, baseR: baseR, shrink: 0.52))
-        ctx.setFillColor(innerColor)
-        ctx.fillPath()
-    }
-
-    let innerPink = color(0xEFB199)
-    // Left ear — taller, sharper, tucked behind the upper-left of the lens
-    drawEar(
-        apex: CGPoint(x: 282, y: 96),
-        baseL: CGPoint(x: 246, y: 372),
-        baseR: CGPoint(x: 446, y: 286),
-        innerColor: innerPink
-    )
-    // Right ear
-    drawEar(
-        apex: CGPoint(x: 742, y: 96),
-        baseL: CGPoint(x: 578, y: 286),
-        baseR: CGPoint(x: 778, y: 372),
-        innerColor: innerPink
-    )
+func gradient(_ colors: [CGColor], _ stops: [CGFloat]) -> CGGradient {
+    CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: stops)!
 }
 
-// MARK: - 4. Lens (center = lensCenter)
-
-// Outer ring (warm cream)
-ctx.setFillColor(color(0xF3E7CC))
-ctx.fillEllipse(in: circle(lc, lensOuterR))
-
-// Thin warm brass accent ring
-ctx.setStrokeColor(color(0xB5793C, alpha: 0.9))
-ctx.setLineWidth(8)
-ctx.strokeEllipse(in: circle(lc, lensOuterR - 8))
-
-// Barrel (dark)
-ctx.setFillColor(color(0x241712))
-ctx.fillEllipse(in: circle(lc, 240))
-
-// Glass: radial gradient, warm-tinted dark glass with a teal-amber sheen
-do {
+func linearFill(_ path: CGPath, _ colors: [CGColor], _ stops: [CGFloat],
+                from: CGPoint, to: CGPoint) {
     ctx.saveGState()
-    ctx.addEllipse(in: circle(lc, 202))
+    ctx.addPath(path)
     ctx.clip()
-    let glassGrad = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [color(0x4A6B5E), color(0x27322C), color(0x161311), color(0x0C0A09)] as CFArray,
-        locations: [0.0, 0.4, 0.75, 1.0]
-    )!
-    let innerCenter = toCG(CGPoint(x: lensCenter.x - 70, y: lensCenter.y - 70))
-    ctx.drawRadialGradient(
-        glassGrad,
-        startCenter: innerCenter, startRadius: 0,
-        endCenter: lc, endRadius: 226,
-        options: [.drawsAfterEndLocation]
-    )
+    ctx.drawLinearGradient(gradient(colors, stops), start: toCG(from), end: toCG(to),
+                           options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
     ctx.restoreGState()
 }
 
-// Reflection: top-left translucent white ellipse for a glassy, 3D highlight
-do {
-    ctx.saveGState()
-    let hc = toCG(CGPoint(x: lensCenter.x - 84, y: lensCenter.y - 88))
-    ctx.translateBy(x: hc.x, y: hc.y)
-    ctx.rotate(by: 35 * .pi / 180) // -35 deg in screen coords = +35 in CG
-    ctx.setFillColor(color(0xFFFFFF, alpha: 0.30))
-    ctx.fillEllipse(in: CGRect(x: -92, y: -58, width: 184, height: 116))
-    ctx.restoreGState()
+func disk(_ radius: CGFloat, _ colors: [CGColor], _ stops: [CGFloat]) {
+    linearFill(CGPath(ellipseIn: circle(lc, radius), transform: nil), colors, stops,
+               from: CGPoint(x: 290, y: 290), to: CGPoint(x: 730, y: 840))
 }
 
-// Inner thin ring
-ctx.setStrokeColor(color(0xFFFFFF, alpha: 0.12))
-ctx.setLineWidth(10)
-ctx.strokeEllipse(in: circle(lc, 148))
+func rim(_ radius: CGFloat, _ width: CGFloat, _ tint: CGColor) {
+    ctx.setStrokeColor(tint)
+    ctx.setLineWidth(width)
+    ctx.strokeEllipse(in: circle(lc, radius))
+}
 
-// Center "current location" marker: white -> warm amber -> white dot
-ctx.setFillColor(color(0xFFFFFF))
-ctx.fillEllipse(in: circle(lc, 56))
-ctx.setFillColor(color(0xF2913C))
-ctx.fillEllipse(in: circle(lc, 42))
-ctx.setFillColor(color(0xFFFFFF))
-ctx.fillEllipse(in: circle(lc, 14))
-
-// MARK: - 5. Paw print (foreground, lower-right beside the lens)
-
-do {
-    let pawCenter = CGPoint(x: 800, y: 800) // top-left coords
-    let pawColor = color(0xFFFFFF, alpha: 0.95)
-    ctx.setFillColor(pawColor)
-
-    // Main pad: a rounded triangle-ish blob (use ellipse, slightly tall)
-    let padW: CGFloat = 96
-    let padH: CGFloat = 80
-    let padC = toCG(CGPoint(x: pawCenter.x, y: pawCenter.y + 28))
-    ctx.fillEllipse(in: CGRect(x: padC.x - padW / 2, y: padC.y - padH / 2, width: padW, height: padH))
-
-    // Four toe beans arching over the pad
-    let toes: [(CGFloat, CGFloat, CGFloat)] = [
-        (pawCenter.x - 64, pawCenter.y - 18, 26),
-        (pawCenter.x - 22, pawCenter.y - 52, 28),
-        (pawCenter.x + 22, pawCenter.y - 52, 28),
-        (pawCenter.x + 64, pawCenter.y - 18, 26),
-    ]
-    for (tx, ty, tr) in toes {
-        let c = toCG(CGPoint(x: tx, y: ty))
-        ctx.fillEllipse(in: CGRect(x: c.x - tr, y: c.y - tr, width: tr * 2, height: tr * 2))
+// Curved sides and a soft apex make the ears feel integrated with the body.
+func ear(_ mirrored: Bool, inner: Bool) -> CGPath {
+    func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        toCG(CGPoint(x: mirrored ? size - x : x, y: y))
     }
+    let path = CGMutablePath()
+    if inner {
+        path.move(to: p(269, 351))
+        path.addCurve(to: p(270, 207), control1: p(260, 301), control2: p(260, 229))
+        path.addQuadCurve(to: p(286, 207), control: p(276, 195))
+        path.addCurve(to: p(364, 298), control1: p(316, 232), control2: p(346, 268))
+    } else {
+        path.move(to: p(225, 415))
+        path.addCurve(to: p(230, 167), control1: p(215, 320), control2: p(215, 221))
+        path.addQuadCurve(to: p(261, 154), control: p(238, 139))
+        path.addCurve(to: p(429, 312), control1: p(313, 181), control2: p(382, 254))
+    }
+    path.closeSubpath()
+    return path
 }
+
+// A single shared shadow anchors ears and barrel without seams at their bases.
+ctx.saveGState()
+ctx.setShadow(offset: CGSize(width: 0, height: -16), blur: 30,
+              color: color(0x493524, alpha: 0.30))
+ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+for mirrored in [false, true] {
+    linearFill(ear(mirrored, inner: false),
+               [color(0x6F6656), color(0x343B36), color(0x202C29)], [0, 0.5, 1],
+               from: CGPoint(x: 240, y: 150), to: CGPoint(x: 390, y: 420))
+    linearFill(ear(mirrored, inner: true),
+               [color(0xF2C3AE), color(0xD58F80), color(0xA86F64)], [0, 0.6, 1],
+               from: CGPoint(x: 270, y: 195), to: CGPoint(x: 320, y: 355))
+}
+disk(326, [color(0x77745F), color(0x283632)], [0, 1])
+ctx.endTransparencyLayer()
+ctx.restoreGState()
+
+// Broad, readable tiers: champagne bevel, dark focusing ring, inner metal seat.
+disk(322, [color(0xFFF0CF), color(0xCBB38C), color(0x8D8067), color(0xE4C59A)],
+     [0, 0.35, 0.72, 1])
+rim(318, 2, color(0xFFF5DC, alpha: 0.65))
+disk(304, [color(0x252F2C), color(0x556058), color(0x172521)], [0, 0.5, 1])
+rim(297, 2, color(0x080F0E, alpha: 0.8))
+
+// Restrained radial machining, confined to the focusing ring.
+ctx.saveGState()
+ctx.setLineWidth(1.3)
+for i in 0..<120 {
+    let angle = CGFloat(i) * 2 * .pi / 120
+    let strength = 0.07 + 0.08 * max(0, sin(angle))
+    ctx.setStrokeColor(color(0xE6D6B5, alpha: strength))
+    ctx.move(to: CGPoint(x: lc.x + cos(angle) * 280, y: lc.y + sin(angle) * 280))
+    ctx.addLine(to: CGPoint(x: lc.x + cos(angle) * 291, y: lc.y + sin(angle) * 291))
+    ctx.strokePath()
+}
+ctx.restoreGState()
+disk(275, [color(0x0F1B19), color(0x758075), color(0x162521)], [0, 0.48, 1])
+disk(264, [color(0xE6CE9F), color(0x86795A), color(0xE1B87D)], [0, 0.52, 1])
+disk(255, [color(0x0A1716), color(0x263C34)], [0, 1])
+
+// MARK: - 4. Deep glass and diagonal softbox reflections
+ctx.saveGState()
+ctx.addEllipse(in: circle(lc, 245))
+ctx.clip()
+ctx.drawRadialGradient(
+    gradient([color(0x588D7D), color(0x245851), color(0x102D2D), color(0x071616)],
+             [0, 0.32, 0.7, 1]),
+    startCenter: toCG(CGPoint(x: 434, y: 462)), startRadius: 0,
+    endCenter: lc, endRadius: 252, options: [.drawsAfterEndLocation])
+
+// Lower reflected amber light gives the glass volume without a solid graphic blob.
+ctx.setBlendMode(.screen)
+ctx.drawRadialGradient(
+    gradient([color(0xBBA365, alpha: 0.43), color(0x5B9879, alpha: 0.16),
+              color(0x366E61, alpha: 0)], [0, 0.45, 1]),
+    startCenter: toCG(CGPoint(x: 593, y: 732)), startRadius: 0,
+    endCenter: toCG(CGPoint(x: 566, y: 707)), endRadius: 178,
+    options: [.drawsAfterEndLocation])
+ctx.setBlendMode(.normal)
+
+// Nested internal optical surfaces remain subordinate to the outer silhouette.
+for (radius, opacity): (CGFloat, CGFloat) in [(209, 0.13), (173, 0.10), (122, 0.07)] {
+    rim(radius, 2, color(0x9AC4A7, alpha: opacity))
+}
+ctx.drawRadialGradient(
+    gradient([color(0x041213, alpha: 0.72), color(0x061819, alpha: 0)], [0, 1]),
+    startCenter: lc, startRadius: 35, endCenter: lc, endRadius: 161,
+    options: [.drawsAfterEndLocation])
+
+// A diagonal reflection, clipped to the glass and feathered across its width.
+ctx.saveGState()
+ctx.translateBy(x: lc.x - 63, y: lc.y + 99)
+ctx.rotate(by: -.pi / 4)
+let reflection = CGPath(roundedRect: CGRect(x: -185, y: -34, width: 370, height: 68),
+                        cornerWidth: 34, cornerHeight: 34, transform: nil)
+ctx.addPath(reflection)
+ctx.clip()
+ctx.drawLinearGradient(
+    gradient([color(0xEFFFF0, alpha: 0), color(0xEFFFF0, alpha: 0.34),
+              color(0xF5FFED, alpha: 0.55), color(0xD8F3E6, alpha: 0)],
+             [0, 0.48, 0.72, 1]),
+    start: CGPoint(x: 0, y: -34), end: CGPoint(x: 0, y: 34), options: [])
+ctx.restoreGState()
+ctx.restoreGState()
+rim(244, 3, color(0xA4C5A9, alpha: 0.27))
+
+// A small cream-and-amber location target is the sole foreground symbol.
+ctx.saveGState()
+ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 9,
+              color: color(0x000000, alpha: 0.5))
+ctx.setFillColor(color(0xF5E7C8))
+ctx.fillEllipse(in: circle(lc, 33))
+ctx.restoreGState()
+ctx.setFillColor(color(0xC88446))
+ctx.fillEllipse(in: circle(lc, 24))
+ctx.setFillColor(color(0xFFF1D5))
+ctx.fillEllipse(in: circle(lc, 8))
 
 // MARK: - Export PNG (opaque)
 
